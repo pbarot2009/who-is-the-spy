@@ -10,7 +10,7 @@ const PORT = parseInt(process.env.PORT || "3000", 10);
 const ROOT = __dirname;
 // Bump APP_VERSION on every release and keep index.html asset URLs in sync
 // (styles.css?v=N, script.js?v=N) so phones never run stale cached files.
-const APP_VERSION = "4";
+const APP_VERSION = "5";
 
 const TYPES = {
   ".html": "text/html; charset=utf-8",
