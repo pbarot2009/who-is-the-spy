@@ -44,3 +44,9 @@ This lists the current bugs in this game:
 1. [fixed] Old styles stuck on phones — index.html is no-cache now, CSS/JS load with ?v=4 version URLs cached hard. Bump APP_VERSION in server.js plus the two URLs in index.html on every release.
 2. [fixed] Voice chat silent — remote audio container used display:none (mutes streams on mobile), now visually hidden but audible. Host calls new joiners, enabling mic resets stale listen-only calls, incoming calls are tracked (no doubles), and mic errors tell you when HTTPS is the problem.
 3. [checked] UI wiring audit — every button/modal/input ID in the HTML is linked in JS, all 4 selects run the custom dropdown.
+
+# round 5 (friend could not join)
+
+1. [fixed] Invite links ignored the code — share sends #CODE but the app never read it. The room code now pre-fills from the link.
+2. [fixed] Join gave up after one try — one slow-network hiccup meant failure. Join now retries 3 times with backoff and says exactly what to check.
+3. [fixed] Backgrounding killed the room silently — returning to the tab now reconnects (host) or auto-rejoins (guest).

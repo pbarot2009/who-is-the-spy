@@ -220,6 +220,11 @@ class Game {
     if (this.myName) this.$("player-name").value = this.myName;
     const lastCode = localStorage.getItem("spy_lastcode");
     if (lastCode) this.$("room-code").value = lastCode;
+    // invite links carry the code as #ABCDE — prefill so friends never mistype it
+    try {
+      const h = (location.hash || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 5);
+      if (h.length === 5) this.$("room-code").value = h;
+    } catch (e) {}
     this.$("sound-toggle").checked = this.soundEnabled;
     this.$("discuss-time").value = this.discussTime;
     this.$("vote-time").value = this.voteTime;
@@ -356,10 +361,17 @@ class Game {
 
     // unlock audio on first touch (autoplay policy best practice)
     window.addEventListener("pointerdown", () => { this.ensureAudio(); }, { passive: true });
-    // guest re-syncs after tab was hidden (mobile backgrounding drops messages)
+    // mobile backgrounding drops sockets — heal on return
     document.addEventListener("visibilitychange", () => {
-      if (document.hidden === false && !this.isHost && this.connections.has("host") && this.roomCode) {
-        this.sendToHost({ type: "syncReq" });
+      if (document.hidden !== false || !this.peer || !this.roomCode) return;
+      if (this.isHost) {
+        if (this.peer.disconnected) { try { this.peer.reconnect(); } catch (e) {} }
+      } else {
+        const host = this.connections.get("host");
+        if (!host || !host.open) {
+          this.toast("Reconnecting…");
+          this.joinRoom();
+        } else this.sendToHost({ type: "syncReq" });
       }
     });
 
@@ -936,7 +948,8 @@ class Game {
     });
   }
 
-  joinRoom() {
+  joinRoom(attempt = 1) {
+    const MAX_ATTEMPTS = 3;
     const name = this.$("player-name").value.trim().slice(0, 16);
     const code = this.$("room-code").value.trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 5);
     if (!name) return this.toast("Enter your name first", "error");
@@ -946,17 +959,26 @@ class Game {
     localStorage.setItem("spy_lastcode", code);
     this.roomCode = code;
     this.isHost = false;
-    this.setStatus("Joining…");
+    this.setStatus(attempt > 1 ? `Retrying… (${attempt}/${MAX_ATTEMPTS})` : "Joining…");
     this.$("join-btn").disabled = true;
+
+    const retry = (msg) => {
+      if (attempt < MAX_ATTEMPTS) {
+        this.toast(`${msg} — retrying (${attempt + 1}/${MAX_ATTEMPTS})…`);
+        setTimeout(() => this.joinRoom(attempt + 1), 2000);
+      } else {
+        this.$("join-btn").disabled = false;
+        this.setStatus("Failed", false);
+        this.toast("Could not reach the room. Check the code, make sure the host's tab is open, and both phones have internet.", "error");
+      }
+    };
 
     try { if (this.peer) this.peer.destroy(); } catch (e) {}
     this.connections.clear();
     this.peer = new Peer({ debug: 0, config: ICE });
 
     let done = false;
-    const failTimer = setTimeout(() => {
-      if (!done) { this.$("join-btn").disabled = false; this.setStatus("Failed", false); this.toast("Host not responding. Check the code.", "error"); }
-    }, 12000);
+    const failTimer = setTimeout(() => { if (!done) retry("Host not responding"); }, 12000);
 
     this.peer.on("open", id => {
       this.myId = id;
@@ -968,11 +990,15 @@ class Game {
     this.peer.on("call", call => this.handleIncomingCall(call));
 
     this.peer.on("error", err => {
+      if (done) return;
       console.error(err);
       clearTimeout(failTimer);
-      this.$("join-btn").disabled = false;
-      this.setStatus("Failed", false);
-      this.toast(err && err.type === "peer-unavailable" ? "Room not found. Check the code." : "Join failed. Retry.", "error");
+      if (err && err.type === "peer-unavailable") retry("Room not found yet");
+      else {
+        this.$("join-btn").disabled = false;
+        this.setStatus("Failed", false);
+        this.toast("Join failed. Check your connection and retry.", "error");
+      }
     });
   }
 
@@ -1019,6 +1045,8 @@ class Game {
       case "joinDenied":
         this.toast(data.reason || "Could not join", "error");
         this.setStatus("Denied", false);
+        // rejoining mid-game lands here with a dead game screen — reset to lobby
+        if (this.phase !== "lobby") setTimeout(() => location.reload(), 1500);
         break;
       case "welcome":
         this.players = Array.isArray(data.players) ? data.players : [];
