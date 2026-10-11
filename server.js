@@ -8,6 +8,9 @@ const zlib = require("zlib");
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const ROOT = __dirname;
+// Bump APP_VERSION on every release and keep index.html asset URLs in sync
+// (styles.css?v=N, script.js?v=N) so phones never run stale cached files.
+const APP_VERSION = "4";
 
 const TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -26,13 +29,17 @@ const TYPES = {
 
 const GZIP_RE = /\.(html|css|js|json|svg|txt|webmanifest)$/;
 
-function cacheControl(file) {
+function cacheControl(file, versioned) {
   if (/\.(woff2?|ttf|png|ico)$/.test(file)) return "public, max-age=31536000, immutable";
+  // versioned (?v=N)CSS/JS are unique per release — cache hard, they can't go stale
+  if (versioned && /\.(css|js|json|svg)$/.test(file)) return "public, max-age=31536000, immutable";
   if (/\.(css|js)$/.test(file)) return "public, max-age=3600";
+  // HTML entry point must revalidate every load so updates reach phones
+  if (/\.html$/.test(file)) return "no-cache, must-revalidate";
   return "public, max-age=0, must-revalidate";
 }
 
-function send(req, res, filePath, stats) {
+function send(req, res, filePath, stats, versioned) {
   const ext = path.extname(filePath).toLowerCase();
   const etag = `"${stats.size.toString(36)}-${stats.mtimeMs.toString(36)}"`;
   if (req.headers["if-none-match"] === etag) {
@@ -43,7 +50,7 @@ function send(req, res, filePath, stats) {
 
   const headers = {
     "Content-Type": TYPES[ext] || "application/octet-stream",
-    "Cache-Control": cacheControl(filePath),
+    "Cache-Control": cacheControl(filePath, versioned),
     "ETag": etag,
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
@@ -64,7 +71,9 @@ function send(req, res, filePath, stats) {
 
 const server = http.createServer((req, res) => {
   try {
-    const urlPath = decodeURIComponent(req.url.split("?")[0]);
+    const qi = req.url.indexOf("?");
+    const urlPath = decodeURIComponent(qi >= 0 ? req.url.slice(0, qi) : req.url);
+    const versioned = qi >= 0 && req.url.slice(qi + 1).split("&").some(p => p === `v=${APP_VERSION}`);
     // resolve inside ROOT; blocks "../" escapes
     let filePath = path.normalize(path.join(ROOT, urlPath === "/" ? "index.html" : urlPath.slice(1)));
     if (!filePath.startsWith(ROOT)) {
@@ -81,7 +90,7 @@ const server = http.createServer((req, res) => {
           res.end("not found");
           return;
         }
-        send(req, res, filePath, stats2);
+        send(req, res, filePath, stats2, versioned);
       });
     });
   } catch (e) {

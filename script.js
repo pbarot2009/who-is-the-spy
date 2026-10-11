@@ -234,7 +234,7 @@ class Game {
     document.body.className = t === "dark" ? "" : `theme-${t}`;
     localStorage.setItem("spy_theme", t);
     const sel = this.$("theme-select");
-    if (sel) sel.value = t;
+    this.setSelect(sel, t);
     const meta = this.$("meta-theme");
     if (meta) meta.content = getComputedStyle(document.body).getPropertyValue("--bg").trim() || "#0f0f13";
   }
@@ -308,6 +308,7 @@ class Game {
     });
     document.addEventListener("keydown", e => {
       if (e.key === "Escape") {
+        this.closeAllDropdowns();
         ["settings-modal", "vote-modal", "guess-modal", "shop-modal", "avatar-modal", "gift-modal", "dev-lock-modal"].forEach(id => this.$(id).classList.add("hidden"));
         if (this.devMode) this.toggleDevPanel(false);
         return;
@@ -375,6 +376,11 @@ class Game {
       b.onclick = () => this.sendChat(b.dataset.emote);
     });
     this.buildLobbyPicks();
+    ["theme-select", "category-select", "mode-select", "gift-to"].forEach(id => this.enhanceSelect(this.$(id)));
+    // tap outside any custom dropdown closes it
+    document.addEventListener("pointerdown", e => {
+      if (!e.target || !e.target.closest || !e.target.closest(".dd")) this.closeAllDropdowns();
+    });
     this.updateWallet();
     this.renderStreak();
   }
@@ -396,12 +402,82 @@ class Game {
       : `<i class="fa-solid fa-microphone-slash"></i><span>Voice</span>`;
   }
 
+  // ---------- custom dropdowns (themed replacement for native <select>) ----------
+  closeAllDropdowns(except) {
+    document.querySelectorAll(".dd.open").forEach(d => {
+      if (d === except) return;
+      d.classList.remove("open");
+      const b = d.querySelector(".dd-btn");
+      if (b) b.setAttribute("aria-expanded", "false");
+      const l = d.querySelector(".dd-list");
+      if (l) l.remove();
+    });
+  }
+
+  setSelect(sel, val) {
+    if (!sel) return;
+    sel.value = val;
+    if (sel._syncDD) sel._syncDD();
+  }
+
+  enhanceSelect(sel) {
+    if (!sel || sel._ddDone) return;
+    sel._ddDone = true;
+    sel.classList.add("native-hidden");
+    const wrap = document.createElement("div");
+    wrap.className = "dd";
+    sel.parentNode.insertBefore(wrap, sel.nextSibling);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "dd-btn";
+    btn.setAttribute("aria-haspopup", "listbox");
+    btn.setAttribute("aria-expanded", "false");
+    wrap.appendChild(btn);
+    const syncLabel = () => {
+      const opts = sel.options ? [...sel.options] : [];
+      const opt = opts[sel.selectedIndex] || opts.find(o => o.selected);
+      btn.innerHTML = `<span class="dd-label">${this.escapeHtml(opt ? opt.textContent : "")}</span><i class="fa-solid fa-chevron-down"></i>`;
+    };
+    sel._syncDD = syncLabel;
+    sel.addEventListener("change", syncLabel);
+    syncLabel();
+    btn.addEventListener("click", e => {
+      e.stopPropagation();
+      const wasOpen = wrap.classList.contains("open");
+      this.closeAllDropdowns();
+      if (wasOpen) return;
+      const list = document.createElement("ul");
+      list.className = "dd-list";
+      list.setAttribute("role", "listbox");
+      (sel.options ? [...sel.options] : []).forEach(o => {
+        const li = document.createElement("li");
+        li.className = "dd-opt" + (o.selected ? " sel" : "");
+        li.setAttribute("role", "option");
+        if (o.selected) li.setAttribute("aria-selected", "true");
+        li.innerHTML = `<span>${this.escapeHtml(o.textContent)}</span>${o.selected ? '<i class="fa-solid fa-check check"></i>' : ""}`;
+        li.addEventListener("click", ev => {
+          ev.stopPropagation();
+          sel.value = o.value;
+          sel.dispatchEvent(new Event("change", { bubbles: true }));
+          syncLabel();
+          this.closeAllDropdowns();
+          this.playSound("click");
+        });
+        list.appendChild(li);
+      });
+      wrap.appendChild(list);
+      wrap.classList.add("open");
+      btn.setAttribute("aria-expanded", "true");
+    });
+    wrap.addEventListener("pointerdown", e => e.stopPropagation());
+  }
+
   // ---------- categories + modes (host picks, guests follow) ----------
   buildLobbyPicks() {
     const cat = this.$("category-select"), mode = this.$("mode-select");
     cat.innerHTML = Object.entries(CATEGORIES).map(([k, v]) => `<option value="${k}">${this.escapeHtml(v.name)}</option>`).join("");
     mode.innerHTML = Object.entries(MODES).map(([k, v]) => `<option value="${k}">${this.escapeHtml(v.name)}</option>`).join("");
-    cat.value = this.category; mode.value = this.mode;
+    this.setSelect(cat, this.category); this.setSelect(mode, this.mode);
     cat.onchange = e => { this.category = e.target.value; localStorage.setItem("spy_cat", this.category); if (this.isHost) this.broadcast({ type: "players", players: this.players, category: this.category, mode: this.mode }); };
     mode.onchange = e => { this.mode = e.target.value; localStorage.setItem("spy_mode", this.mode); if (this.isHost) this.broadcast({ type: "players", players: this.players, category: this.category, mode: this.mode }); };
   }
@@ -495,7 +571,9 @@ class Game {
 
   openGift() {
     const others = this.players.filter(p => p.id !== this.myId && !p.bot);
-    this.$("gift-to").innerHTML = others.map(p => `<option value="${this.escapeHtml(p.id)}">${this.escapeHtml(p.name)}</option>`).join("") || `<option value="">No one to gift</option>`;
+    const gt = this.$("gift-to");
+    gt.innerHTML = others.map(p => `<option value="${this.escapeHtml(p.id)}">${this.escapeHtml(p.name)}</option>`).join("") || `<option value="">No one to gift</option>`;
+    if (gt._syncDD) gt._syncDD();
     this.updateWallet();
     this.$("gift-modal").classList.remove("hidden");
   }
@@ -540,13 +618,25 @@ class Game {
   async toggleVoice() {
     if (this.voiceOn) { this.stopVoice(); return; }
     if (!this.peer || !this.myId) return this.toast("Join a room first", "error");
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      if (!window.isSecureContext) return this.toast("Voice needs HTTPS — open the https site, not a plain-IP link", "error");
+      return this.toast("Voice not supported in this browser", "error");
+    }
     try {
       this.localStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false });
-    } catch (e) { return this.toast("Mic blocked — allow microphone access", "error"); }
+    } catch (e) {
+      if (!window.isSecureContext) return this.toast("Voice needs HTTPS — open the https site, not a plain-IP link", "error");
+      return this.toast("Mic blocked — allow microphone access", "error");
+    }
     this.voiceOn = true;
     this.syncVoiceBtn();
     this.toast("Voice live — talk to the room", "success");
     this.playSound("join");
+    // drop old calls (e.g. listen-only ones answered before we had a mic)
+    // so every peer gets a fresh two-way call with our stream
+    this.voiceCalls.forEach(c => { try { c.close(); } catch (e) {} });
+    this.voiceCalls.clear();
+    this.$("voice-audio").innerHTML = "";
     this.callAllPeers();
     this.broadcast({ type: "voice-state", id: this.myId, on: true });
     if (!this.isHost) this.sendToHost({ type: "voice-state", id: this.myId, on: true });
@@ -591,12 +681,17 @@ class Game {
       this.$("voice-audio").appendChild(el);
     }
     el.srcObject = stream;
+    el.muted = false;
+    try { const p = el.play && el.play(); if (p && p.catch) p.catch(() => {}); } catch (e) {}
   }
 
   detachVoice(pid) { const el = document.getElementById(`voice-${pid}`); if (el) el.remove(); }
 
   handleIncomingCall(call) {
-    // Answer with mic if live, else listen-only (one-way per PeerJS docs).
+    // Track it so callAllPeers never doubles it and stopVoice kills it.
+    const old = this.voiceCalls.get(call.peer);
+    if (old && old !== call) { try { old.close(); } catch (e) {} }
+    this.voiceCalls.set(call.peer, call);
     const answer = () => {
       try {
         if (this.voiceOn && this.localStream) call.answer(this.localStream);
@@ -609,7 +704,8 @@ class Game {
       try { call.answer(); } catch (e) {}
     }
     call.on("stream", s => this.attachVoice(call.peer, s));
-    call.on("close", () => this.detachVoice(call.peer));
+    call.on("close", () => { if (this.voiceCalls.get(call.peer) === call) this.voiceCalls.delete(call.peer); this.detachVoice(call.peer); });
+    call.on("error", () => { if (this.voiceCalls.get(call.peer) === call) this.voiceCalls.delete(call.peer); });
   }
 
   // ---------- confetti celebration ----------
@@ -916,6 +1012,8 @@ class Game {
         this.sendTo(conn, { type: "welcome", players: this.players, roomCode: this.roomCode, chat: this.chatHistory.slice(-40), category: this.category, mode: this.mode });
         this.broadcast({ type: "players", players: this.players, category: this.category, mode: this.mode });
         this.playSound("join");
+        // live voice room: call the newcomer so they hear us without toggling
+        if (this.voiceOn) this.callAllPeers();
         break;
       }
       case "joinDenied":
@@ -925,8 +1023,8 @@ class Game {
       case "welcome":
         this.players = Array.isArray(data.players) ? data.players : [];
         this.roomCode = data.roomCode || this.roomCode;
-        if (data.category) { this.category = data.category; this.$("category-select").value = data.category; }
-        if (data.mode) { this.mode = data.mode; this.$("mode-select").value = data.mode; }
+        if (data.category) { this.category = data.category; this.setSelect(this.$("category-select"), data.category); }
+        if (data.mode) { this.mode = data.mode; this.setSelect(this.$("mode-select"), data.mode); }
         this.chatHistory = Array.isArray(data.chat) ? data.chat : [];
         this.renderPlayers();
         this.renderChat();
@@ -938,11 +1036,12 @@ class Game {
         }
         this.setStatus("In room", true);
         this.toast("Joined room!", "success");
+        if (this.voiceOn) this.callAllPeers();
         break;
       case "players":
         this.players = Array.isArray(data.players) ? data.players : [];
-        if (data.category && !this.isHost) { this.category = data.category; this.$("category-select").value = data.category; }
-        if (data.mode && !this.isHost) { this.mode = data.mode; this.$("mode-select").value = data.mode; }
+        if (data.category && !this.isHost) { this.category = data.category; this.setSelect(this.$("category-select"), data.category); }
+        if (data.mode && !this.isHost) { this.mode = data.mode; this.setSelect(this.$("mode-select"), data.mode); }
         this.renderPlayers();
         if (this.voiceOn) this.callAllPeers();
         break;
@@ -950,8 +1049,8 @@ class Game {
         // personalized: { isSpy, location (null for spy), round, players }
         this.isSpy = !!data.isSpy;
         this.spyIds = data.spyIds || (data.isSpy ? [this.myId] : []);
-        if (data.category && CATEGORIES[data.category]) { this.category = data.category; this.$("category-select").value = data.category; }
-        if (data.mode && MODES[data.mode]) { this.mode = data.mode; this.$("mode-select").value = data.mode; }
+        if (data.category && CATEGORIES[data.category]) { this.category = data.category; this.setSelect(this.$("category-select"), data.category); }
+        if (data.mode && MODES[data.mode]) { this.mode = data.mode; this.setSelect(this.$("mode-select"), data.mode); }
         this.location = data.location || "";
         this.spyId = null; // guests never learn it
         this.round = data.round || 1;
@@ -1000,8 +1099,8 @@ class Game {
       case "nextRound":
         this.isSpy = !!data.isSpy;
         this.spyIds = data.spyIds || [];
-        if (data.category && CATEGORIES[data.category]) { this.category = data.category; this.$("category-select").value = data.category; }
-        if (data.mode && MODES[data.mode]) { this.mode = data.mode; this.$("mode-select").value = data.mode; }
+        if (data.category && CATEGORIES[data.category]) { this.category = data.category; this.setSelect(this.$("category-select"), data.category); }
+        if (data.mode && MODES[data.mode]) { this.mode = data.mode; this.setSelect(this.$("mode-select"), data.mode); }
         this.location = data.location || "";
         this.spyId = null;
         this.round = data.round;
@@ -1109,8 +1208,8 @@ class Game {
   applySync(data) {
     if (this.isHost || !data) return;
     if (typeof data.round === "number" && data.round > 0) this.round = data.round;
-    if (data.category && CATEGORIES[data.category]) { this.category = data.category; this.$("category-select").value = data.category; }
-    if (data.mode && MODES[data.mode]) { this.mode = data.mode; this.$("mode-select").value = data.mode; }
+    if (data.category && CATEGORIES[data.category]) { this.category = data.category; this.setSelect(this.$("category-select"), data.category); }
+    if (data.mode && MODES[data.mode]) { this.mode = data.mode; this.setSelect(this.$("mode-select"), data.mode); }
     if (Array.isArray(data.players)) this.players = data.players;
     // guests who missed the start can't recover a role — wait for next round
     if (this.phase === "lobby" && data.phase && data.phase !== "lobby") {
