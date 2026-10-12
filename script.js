@@ -67,14 +67,39 @@ const PROMPTS = [
 const DEFAULT_DEV_PIN = "2468";
 
 const COLORS = ["#7c5cfc", "#ef4444", "#22c55e", "#f59e0b", "#0ea5e9", "#ec4899", "#8b5cf6", "#14b8a6"];
+const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 const PEER_PREFIX = "whos-spy-v1-";
 const MIN_PLAYERS = 3;
-const ICE = {
-  iceServers: [
-    { urls: "stun:stun.l.google.com:19302" },
-    { urls: "stun:stun1.l.google.com:19302" }
-  ]
-};
+const BASE_STUN = [
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun1.l.google.com:19302" },
+  { urls: "stun:stun2.l.google.com:19302" },
+  { urls: "stun:stun3.l.google.com:19302" },
+  { urls: "stun:stun4.l.google.com:19302" }
+];
+// Optional TURN relay for symmetric/carrier NATs.
+// Set localStorage "spy_turn" to JSON like {"urls":"turn:host:3478","username":"u","credential":"p"}.
+// Without TURN ~15-20% of mobile networks fail P2P — error text says so.
+function buildICE() {
+  const servers = [...BASE_STUN];
+  try {
+    const raw = localStorage.getItem("spy_turn");
+    if (raw) {
+      const t = JSON.parse(raw);
+      if (t && t.urls) servers.push(t);
+    }
+  } catch (e) {}
+  return { iceServers: servers };
+}
+const ICE = buildICE();
+
+function safeParseJSON(raw, fallback) {
+  try {
+    if (!raw) return fallback;
+    const v = JSON.parse(raw);
+    return v === undefined ? fallback : v;
+  } catch (e) { return fallback; }
+}
 
 class Game {
   constructor() {
@@ -109,8 +134,11 @@ class Game {
     this.longPressMs = 700;
     // economy / avatar / engagement
     this.coins = this.clampInt(localStorage.getItem("spy_coins"), 100, 0, 99999);
-    this.owned = JSON.parse(localStorage.getItem("spy_owned") || '["frame-none"]');
-    this.avatar = JSON.parse(localStorage.getItem("spy_avatar") || '{"icon":"fa-user-secret","color":"#7c5cfc","frame":"frame-none"}');
+    const ownedRaw = safeParseJSON(localStorage.getItem("spy_owned"), ["frame-none"]);
+    this.owned = Array.isArray(ownedRaw) ? ownedRaw.filter(x => typeof x === "string").slice(0, 40) : ["frame-none"];
+    if (!this.owned.includes("frame-none")) this.owned.unshift("frame-none");
+    const avatarRaw = safeParseJSON(localStorage.getItem("spy_avatar"), null);
+    this.avatar = this.sanitizeAvatar(avatarRaw);
     this.streak = this.clampInt(localStorage.getItem("spy_streak"), 0, 0, 999);
     this.bestStreak = this.clampInt(localStorage.getItem("spy_best"), 0, 0, 999);
     this.category = localStorage.getItem("spy_cat") || "classic";
@@ -134,6 +162,18 @@ class Game {
     if (Number.isNaN(n)) return fallback;
     return Math.min(max, Math.max(min, n));
   }
+
+  validColor(c) { return typeof c === "string" && COLOR_RE.test(c) ? c : "#7c5cfc"; }
+
+  sanitizeAvatar(a) {
+    const fallback = { icon: "fa-user-secret", color: "#7c5cfc", frame: "frame-none" };
+    if (!a || typeof a !== "object") return { ...fallback };
+    const icon = typeof a.icon === "string" && /^fa-[a-z0-9-]+$/.test(a.icon) ? a.icon : fallback.icon;
+    const frame = typeof a.frame === "string" && /^[a-z0-9-]+$/.test(a.frame) ? a.frame : "frame-none";
+    return { icon, color: this.validColor(a.color), frame };
+  }
+
+  iceConfig() { return buildICE(); }
 
   // ---------- small helpers ----------
   $(id) { return document.getElementById(id); }
@@ -195,14 +235,24 @@ class Game {
     switch (type) {
       case "click": this.tone(520, 0.07); break;
       case "join": this.tone(523, 0.1); this.tone(784, 0.14, "sine", 0.16, 0.09); break;
+      case "leave": this.tone(500, 0.1); this.tone(300, 0.14, "sine", 0.14, 0.09); break;
+      case "chat-pop": this.tone(740, 0.05, "sine", 0.1); this.tone(980, 0.07, "sine", 0.1, 0.05); break;
       case "vote": this.tone(660, 0.09, "triangle"); break;
+      case "vote-each": this.tone(720, 0.05, "triangle", 0.08); break;
+      case "vote-done": this.tone(660, 0.09, "triangle"); this.tone(880, 0.12, "triangle", 0.14, 0.08); break;
       case "tick": this.tone(880, 0.06, "square", 0.08); break;
+      case "go": this.tone(880, 0.1, "triangle", 0.16); this.tone(1175, 0.16, "triangle", 0.16, 0.09); break;
       case "coin": this.tone(988, 0.08); this.tone(1319, 0.16, "sine", 0.16, 0.07); break;
+      case "gift-send": this.tone(988, 0.08); this.tone(1319, 0.12, "sine", 0.14, 0.07); break;
+      case "gift-receive": [784, 988, 1319].forEach((f, i) => this.tone(f, 0.12, "sine", 0.14, i * 0.08)); break;
+      case "guess-open": this.tone(620, 0.09, "triangle"); break;
+      case "guess-right": [659, 784, 988, 1319].forEach((f, i) => this.tone(f, 0.14, "triangle", 0.15, i * 0.09)); this.buzz([20, 40, 20]); break;
+      case "guess-wrong": this.tone(330, 0.14, "sine", 0.1); this.tone(262, 0.16, "sine", 0.1, 0.1); break;
       case "reveal": this.tone(392, 0.14, "triangle"); this.tone(523, 0.18, "triangle", 0.16, 0.12); break;
       case "success": [523, 659, 784, 1047].forEach((f, i) => this.tone(f, 0.16, "sine", 0.16, i * 0.1)); this.buzz([20, 40, 20]); break;
       case "win": [523, 659, 784, 1047, 1319].forEach((f, i) => this.tone(f, 0.2, "triangle", 0.16, i * 0.11)); this.buzz([30, 50, 30, 50, 60]); break;
       case "lose": [400, 340, 280, 200].forEach((f, i) => this.tone(f, 0.2, "sawtooth", 0.08, i * 0.12)); this.buzz(60); break;
-      case "error": this.tone(220, 0.2, "sawtooth", 0.1); break;
+      case "error": this.tone(220, 0.16, "sine", 0.1); break;
       case "round": this.tone(440, 0.1); this.tone(660, 0.12, "sine", 0.16, 0.1); break;
       default: this.tone(520, 0.07);
     }
@@ -306,7 +356,10 @@ class Game {
     };
 
     document.querySelectorAll("[data-close]").forEach(btn => {
-      btn.onclick = () => this.$(btn.dataset.close).classList.add("hidden");
+      btn.onclick = () => {
+        this.$(btn.dataset.close).classList.add("hidden");
+        if (btn.dataset.close === "vote-modal" && this.phase === "vote") this.toast("Vote closed — tap Vote to reopen");
+      };
     });
     document.querySelectorAll(".modal, .overlay").forEach(m => {
       m.addEventListener("click", e => { if (e.target === m && m.id !== "results") m.classList.add("hidden"); });
@@ -541,7 +594,8 @@ class Game {
   }
 
   avatarHtml(p, size = 36) {
-    const a = p.avatar || { icon: "fa-user-secret", color: p.color || "#7c5cfc", frame: "frame-none" };
+    const raw = p.avatar || { icon: "fa-user-secret", color: p.color || "#7c5cfc", frame: "frame-none" };
+    const a = this.sanitizeAvatar(raw);
     const initial = this.escapeHtml((p.name || "?")[0].toUpperCase());
     const icon = a.icon && a.icon.startsWith("fa-") ? `<i class="fa-solid ${a.icon}"></i>` : initial;
     return `<div class="avatar ${a.frame && a.frame !== "frame-none" ? a.frame : ""}" style="background:${this.escapeHtml(a.color)};width:${size}px;height:${size}px;font-size:${Math.round(size * 0.42)}px">${icon}</div>`;
@@ -554,7 +608,8 @@ class Game {
   }
 
   renderAvatarBuilder() {
-    const t = this.tmpAvatar;
+    const t = this.sanitizeAvatar(this.tmpAvatar);
+    this.tmpAvatar = { ...t };
     this.$("avatar-preview").innerHTML = `<div class="big ${t.frame !== "frame-none" ? t.frame : ""}" style="background:${this.escapeHtml(t.color)}"><i class="fa-solid ${t.icon}"></i></div>`;
     this.$("avatar-icons").innerHTML = AVATAR_ICONS.map(ic => `<button data-ic="${ic}" class="${t.icon === ic ? "sel" : ""}"><i class="fa-solid ${ic}"></i></button>`).join("");
     this.$("avatar-colors").innerHTML = COLORS.map(c => `<button data-c="${c}" class="swatch ${t.color === c ? "sel" : ""}" style="background:${c}" aria-label="${c}">·</button>`).join("");
@@ -566,7 +621,7 @@ class Game {
   }
 
   saveAvatar() {
-    this.avatar = { ...this.tmpAvatar };
+    this.avatar = this.sanitizeAvatar(this.tmpAvatar);
     localStorage.setItem("spy_avatar", JSON.stringify(this.avatar));
     this.playSound("success");
     this.toast("Avatar saved", "success");
@@ -602,13 +657,13 @@ class Game {
     if (this.isHost) this.routeGift(payload);
     else this.sendToHost(payload);
     this.$("gift-modal").classList.add("hidden");
-    this.playSound("coin");
+    this.playSound("gift-send");
     this.toast(`Sent ${amount} coins`, "success");
   }
 
   routeGift(d) {
     // host relays to recipient; recipient credits locally
-    if (d.to === this.myId) { this.earnCoins(d.amount); this.addSystemMessage(`${d.fromName} sent you ${d.amount} coins!`); return; }
+    if (d.to === this.myId) { this.earnCoins(d.amount); this.playSound("gift-receive"); this.addSystemMessage(`${d.fromName} sent you ${d.amount} coins!`); return; }
     const conn = this.connections.get(d.to);
     if (conn) this.sendTo(conn, d);
     this.addSystemMessage(`${d.fromName} gifted ${d.amount} coins.`);
@@ -650,8 +705,8 @@ class Game {
     this.voiceCalls.clear();
     this.$("voice-audio").innerHTML = "";
     this.callAllPeers();
-    this.broadcast({ type: "voice-state", id: this.myId, on: true });
-    if (!this.isHost) this.sendToHost({ type: "voice-state", id: this.myId, on: true });
+    if (this.isHost) this.broadcast({ type: "voice-state", id: this.myId, on: true });
+    else this.sendToHost({ type: "voice-state", id: this.myId, on: true });
   }
 
   stopVoice() {
@@ -662,8 +717,8 @@ class Game {
     this.voiceCalls.clear();
     this.$("voice-audio").innerHTML = "";
     this.syncVoiceBtn();
-    this.broadcast({ type: "voice-state", id: this.myId, on: false });
-    if (!this.isHost) this.sendToHost({ type: "voice-state", id: this.myId, on: false });
+    if (this.isHost) this.broadcast({ type: "voice-state", id: this.myId, on: false });
+    else this.sendToHost({ type: "voice-state", id: this.myId, on: false });
     this.renderPlayers();
   }
 
@@ -723,10 +778,19 @@ class Game {
   // ---------- confetti celebration ----------
   launchConfetti(n = 130) {
     if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    try { if (this.confettiRAF) cancelAnimationFrame(this.confettiRAF); } catch (e) {}
+    if (this._confettiResize) { try { window.removeEventListener("resize", this._confettiResize); } catch (e) {} }
     const cv = this.$("confetti");
     cv.classList.remove("hidden");
     const ctx = cv.getContext("2d");
-    cv.width = innerWidth; cv.height = innerHeight;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const sizeCanvas = () => {
+      cv.width = Math.floor(innerWidth * dpr); cv.height = Math.floor(innerHeight * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    };
+    sizeCanvas();
+    this._confettiResize = sizeCanvas;
+    window.addEventListener("resize", this._confettiResize);
     const colors = [getComputedStyle(document.body).getPropertyValue("--primary") || "#7c5cfc", "#22c55e", "#f59e0b", "#ec4899", "#0ea5e9"];
     const parts = Array.from({ length: n }, () => ({
       x: Math.random() * cv.width, y: -20 - Math.random() * cv.height * 0.3,
@@ -737,15 +801,19 @@ class Game {
     }));
     const t0 = Date.now();
     const tick = () => {
-      ctx.clearRect(0, 0, cv.width, cv.height);
+      ctx.clearRect(0, 0, innerWidth, innerHeight);
       parts.forEach(p => {
         p.x += p.vx; p.y += p.vy; p.r += p.vr;
         ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.r);
         ctx.fillStyle = p.c; ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
         ctx.restore();
       });
-      if (Date.now() - t0 < 2600) requestAnimationFrame(tick);
-      else { cv.classList.add("hidden"); ctx.clearRect(0, 0, cv.width, cv.height); }
+      if (Date.now() - t0 < 2600) this.confettiRAF = requestAnimationFrame(tick);
+      else {
+        cv.classList.add("hidden"); ctx.clearRect(0, 0, innerWidth, innerHeight);
+        this.confettiRAF = null;
+        if (this._confettiResize) { try { window.removeEventListener("resize", this._confettiResize); } catch (e) {} this._confettiResize = null; }
+      }
     };
     tick();
   }
@@ -824,6 +892,8 @@ class Game {
 
   updateDevPanel() {
     if (!this.devMode) return;
+    const panel = this.$("dev-panel");
+    if (panel && panel.classList.contains("hidden")) return;
     const spy = this.isHost
       ? (this.players.find(p => p.id === this.spyId)?.name || "—")
       : (this.isSpy ? `${this.myName} (you)` : "hidden — you are not host");
@@ -916,14 +986,14 @@ class Game {
 
     try { if (this.peer) this.peer.destroy(); } catch (e) {}
     this.connections.clear();
-    this.peer = new Peer(this.peerIdFor(this.roomCode), { debug: 0, config: ICE });
+    this.peer = new Peer(this.peerIdFor(this.roomCode), { debug: 0, config: this.iceConfig() });
 
     this.peer.on("open", id => {
       this.myId = id;
       this.players = [];
       this.addPlayer({ id, name: this.myName, isHost: true, score: 0, color: COLORS[0], avatar: this.avatar });
       this.showHostLobby();
-      this.setStatus(`Hosting · ${this.roomCode}`, true);
+      this.setStatus(`Hosting · ${this.roomCode} · 1`, true);
       this.startSync();
       this.playSound("success");
       this.toast(`Room ${this.roomCode} created — share the code!`, "success");
@@ -950,6 +1020,7 @@ class Game {
 
   joinRoom(attempt = 1) {
     const MAX_ATTEMPTS = 3;
+    const BACKOFF = [0, 1000, 2000, 4000];
     const name = this.$("player-name").value.trim().slice(0, 16);
     const code = this.$("room-code").value.trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 5);
     if (!name) return this.toast("Enter your name first", "error");
@@ -959,47 +1030,66 @@ class Game {
     localStorage.setItem("spy_lastcode", code);
     this.roomCode = code;
     this.isHost = false;
+    this.joinAttempt = attempt;
     this.setStatus(attempt > 1 ? `Retrying… (${attempt}/${MAX_ATTEMPTS})` : "Joining…");
     this.$("join-btn").disabled = true;
 
     const retry = (msg) => {
+      if (this.joinAttempt !== attempt) return; // superseded by newer attempt
       if (attempt < MAX_ATTEMPTS) {
         this.toast(`${msg} — retrying (${attempt + 1}/${MAX_ATTEMPTS})…`);
-        setTimeout(() => this.joinRoom(attempt + 1), 2000);
+        setTimeout(() => { if (this.joinAttempt === attempt) this.joinRoom(attempt + 1); }, BACKOFF[attempt + 1] || 2000);
       } else {
         this.$("join-btn").disabled = false;
         this.setStatus("Failed", false);
-        this.toast("Could not reach the room. Check the code, make sure the host's tab is open, and both phones have internet.", "error");
+        this.toast("Could not reach the room. Check the code, host tab open, same PeerJS cloud, or symmetric NAT (needs TURN relay).", "error");
       }
     };
 
-    try { if (this.peer) this.peer.destroy(); } catch (e) {}
-    this.connections.clear();
-    this.peer = new Peer({ debug: 0, config: ICE });
+    // Reuse a live peer so retries don't mint new IDs (ghost duplicates on host).
+    let peer = this.peer;
+    const peerUsable = peer && !peer.destroyed;
+    if (!peerUsable) {
+      try { if (peer) peer.destroy(); } catch (e) {}
+      this.connections.clear();
+      peer = new Peer({ debug: 0, config: this.iceConfig() });
+      this.peer = peer;
+      this.peer.on("call", call => this.handleIncomingCall(call));
+      this.peer.on("error", err => {
+        if (this.joinAttempt !== attempt) return;
+        console.error(err);
+        clearTimeout(failTimer);
+        if (err && err.type === "peer-unavailable") retry("Room not found yet");
+        else {
+          this.$("join-btn").disabled = false;
+          this.setStatus("Failed", false);
+          this.toast("Join failed. Check connection — carrier NAT may need a TURN relay (see bugs.md A1).", "error");
+        }
+      });
+    }
 
     let done = false;
-    const failTimer = setTimeout(() => { if (!done) retry("Host not responding"); }, 12000);
+    const failTimer = setTimeout(() => { if (!done && this.joinAttempt === attempt) retry("Host not responding"); }, 12000);
 
-    this.peer.on("open", id => {
-      this.myId = id;
-      const conn = this.peer.connect(this.peerIdFor(code), { reliable: true });
+    const doConnect = () => {
+      if (this.joinAttempt !== attempt) { clearTimeout(failTimer); return; }
+      this.myId = this.peer.id;
+      if (!this.myId) { setTimeout(doConnect, 300); return; }
+      try { const old = this.connections.get("host"); if (old) { try { old.close(); } catch (e) {} } } catch (e) {}
+      this.connections.delete("host");
+      let conn;
+      try { conn = this.peer.connect(this.peerIdFor(code), { reliable: true }); } catch (e) { conn = null; }
       if (!conn) { clearTimeout(failTimer); this.$("join-btn").disabled = false; return this.toast("Could not connect", "error"); }
       this.handleConnection(conn, () => { done = true; clearTimeout(failTimer); this.$("join-btn").disabled = false; });
-    });
+    };
 
-    this.peer.on("call", call => this.handleIncomingCall(call));
-
-    this.peer.on("error", err => {
-      if (done) return;
-      console.error(err);
-      clearTimeout(failTimer);
-      if (err && err.type === "peer-unavailable") retry("Room not found yet");
-      else {
-        this.$("join-btn").disabled = false;
-        this.setStatus("Failed", false);
-        this.toast("Join failed. Check your connection and retry.", "error");
-      }
-    });
+    if (peer.open) doConnect();
+    else {
+      const onOpen = id => { try { peer.off("open", onOpen); } catch (e) {} doConnect(); };
+      peer.on("open", onOpen);
+      peer.once("open", onOpen);
+      setTimeout(() => { try { peer.off("open", onOpen); } catch (e) {} if (!done && this.joinAttempt === attempt && !peer.open) retry("Signaling slow"); }, 12000);
+    }
   }
 
   handleConnection(conn, onOpen) {
@@ -1007,7 +1097,7 @@ class Game {
       if (this.isHost) {
         this.connections.set(conn.peer, conn);
         conn.send({ type: "welcome", players: this.players, roomCode: this.roomCode, chat: this.chatHistory.slice(-40) });
-        this.setStatus(`Hosting · ${this.players.length}`, true);
+        this.setStatus(`Hosting · ${this.roomCode} · ${this.players.length}`, true);
       } else {
         this.connections.set("host", conn);
         conn.send({ type: "join", id: this.myId, name: this.myName, avatar: this.avatar });
@@ -1033,8 +1123,9 @@ class Game {
       case "join": {
         if (!this.isHost) break;
         if (this.phase !== "lobby") { try { conn.send({ type: "joinDenied", reason: "Game already started" }); } catch (e) {} break; }
+        if (this.players.find(p => p.id === data.id)) break; // retry with reused peer, already added
         const color = COLORS[this.players.length % COLORS.length];
-        this.addPlayer({ id: data.id, name: String(data.name || "Player").slice(0, 16), isHost: false, score: 0, color, avatar: data.avatar || null });
+        this.addPlayer({ id: data.id, name: String(data.name || "Player").slice(0, 16), isHost: false, score: 0, color, avatar: this.sanitizeAvatar(data.avatar) });
         this.sendTo(conn, { type: "welcome", players: this.players, roomCode: this.roomCode, chat: this.chatHistory.slice(-40), category: this.category, mode: this.mode });
         this.broadcast({ type: "players", players: this.players, category: this.category, mode: this.mode });
         this.playSound("join");
@@ -1095,6 +1186,7 @@ class Game {
         break;
       case "chat":
         this.addChatMessage(data.name, data.message, data.id === this.myId, data.time, data.id === "system");
+        if (data.id !== this.myId && data.id !== "system") this.playSound("chat-pop");
         if (this.isHost && conn && data.id !== "system") this.broadcastExcept({ type: "chat", id: data.id, name: data.name, message: data.message, time: data.time, msgId: data.msgId }, conn);
         break;
       case "phase":
@@ -1149,7 +1241,7 @@ class Game {
       }
       case "gift":
         if (this.isHost) this.routeGift(data);
-        else if (data.to === this.myId) { this.earnCoins(data.amount); this.addSystemMessage(`${data.fromName} sent you ${data.amount} coins!`); this.toast(`+${data.amount} coins from ${data.fromName}!`, "success"); }
+        else if (data.to === this.myId) { this.earnCoins(data.amount); this.playSound("gift-receive"); this.addSystemMessage(`${data.fromName} sent you ${data.amount} coins!`); this.toast(`+${data.amount} coins from ${data.fromName}!`, "success"); }
         break;
       case "voice-state": {
         const p = this.players.find(x => x.id === data.id);
@@ -1172,18 +1264,18 @@ class Game {
   }
 
   onDisconnect(conn) {
-    if (this.isHost) {
-      const pid = conn.peer;
-      this.connections.delete(pid);
-      this.voiceCalls.delete(pid);
-      this.detachVoice(pid);
-      const left = this.players.find(p => p.id === pid);
-      this.players = this.players.filter(p => p.id !== pid);
-      delete this.votes[pid];
-      this.broadcast({ type: "players", players: this.players });
-      this.renderPlayers();
-      this.setStatus(`Hosting · ${this.players.length}`, true);
-      if (left) this.addSystemMessage(`${left.name} left the room.`);
+      if (this.isHost) {
+        const pid = conn.peer;
+        this.connections.delete(pid);
+        this.voiceCalls.delete(pid);
+        this.detachVoice(pid);
+        const left = this.players.find(p => p.id === pid);
+        this.players = this.players.filter(p => p.id !== pid);
+        delete this.votes[pid];
+        this.broadcast({ type: "players", players: this.players });
+        this.renderPlayers();
+        this.setStatus(`Hosting · ${this.roomCode} · ${this.players.length}`, true);
+        if (left) { this.addSystemMessage(`${left.name} left the room.`); this.playSound("leave"); }
       // if everyone voted already (minus leaver), close the vote
       if (this.phase === "vote") this.maybeCloseVoting();
     } else {
@@ -1288,6 +1380,9 @@ class Game {
   }
 
   renderPlayers() {
+    const sig = JSON.stringify([this.players, this.myId]);
+    if (sig === this._playersSig) { this.updateStartButton(); return; }
+    this._playersSig = sig;
     const list = this.$("player-list");
     if (list) {
       list.innerHTML = this.players.map(p => `
@@ -1358,9 +1453,13 @@ class Game {
     const pool = this.poolFor(this.category);
     this.location = pool[Math.floor(Math.random() * pool.length)];
     const ids = this.players.map(p => p.id);
-    const shuffled = [...ids].sort(() => Math.random() - 0.5);
+    // Fisher-Yates — uniform shuffle
+    for (let i = ids.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [ids[i], ids[j]] = [ids[j], ids[i]];
+    }
     const want = MODES[this.mode] && MODES[this.mode].spies === 2 && ids.length >= 6 ? 2 : 1;
-    this.spyIds = shuffled.slice(0, want);
+    this.spyIds = ids.slice(0, want);
     this.spyId = this.spyIds[0];
     this.round = this.round || 1;
   }
@@ -1427,7 +1526,8 @@ class Game {
       banner.classList.remove("spy");
     }
     const allowGuess = !MODES[this.mode] || MODES[this.mode].guess !== false;
-    this.$("guess-now-btn").classList.toggle("hidden", !(this.isSpy && allowGuess));
+    const gb = this.$("guess-now-btn");
+    gb.classList.toggle("ghost-hide", !(this.isSpy && allowGuess));
   }
 
   startDiscussion() {
@@ -1457,7 +1557,7 @@ class Game {
   openVoteModal() {
     const modal = this.$("vote-modal");
     const options = this.$("vote-options");
-    const others = this.players.filter(p => p.id !== this.myId);
+    const others = this.players.filter(p => p.id !== this.myId && !p.bot);
     if (!others.length) return this.toast("Nobody to vote for", "error");
     options.innerHTML = others.map(p => `
       <div class="vote-option" data-id="${this.escapeHtml(p.id)}">
@@ -1490,9 +1590,12 @@ class Game {
   }
 
   recordVote(data) {
+    if (this.phase !== "vote") return;
     if (!data || !data.id || !data.vote) return;
-    if (!this.players.find(p => p.id === data.id)) return;
-    if (!this.players.find(p => p.id === data.vote)) return;
+    if (data.id === data.vote) return;
+    const voter = this.players.find(p => p.id === data.id);
+    const target = this.players.find(p => p.id === data.vote);
+    if (!voter || voter.bot || !target || target.bot) return;
     this.votes[data.id] = data.vote;
     this.broadcastVoteCount();
     this.maybeCloseVoting();
@@ -1504,6 +1607,7 @@ class Game {
     const count = Object.keys(this.votes).filter(id => !id.startsWith("bot-")).length;
     this.broadcast({ type: "voteCount", count, total });
     this.renderVoteProgress(count, total);
+    if (count > 0) this.playSound("vote-each");
   }
 
   renderVoteProgress(count, total) {
@@ -1529,10 +1633,10 @@ class Game {
     Object.values(this.votes).forEach(v => { if (v) tally[v] = (tally[v] || 0) + 1; });
     const maxVotes = Math.max(0, ...Object.values(tally));
     const eliminated = maxVotes > 0 ? Object.keys(tally).filter(id => tally[id] === maxVotes) : [];
-    const caught = eliminated.filter(id => this.spyIds.includes(id));
-    const spyCaught = this.spyIds.length === 1
-      ? (eliminated.length === 1 && eliminated[0] === this.spyId)
-      : (caught.length >= 1 && eliminated.length <= this.spyIds.length);
+    // One rule for all modes: caught only if someone was voted out and all of them are spies.
+    // Ties with a citizen in the mix let the spies survive.
+    const spyCaught = eliminated.length > 0 && eliminated.every(id => this.spyIds.includes(id));
+    this.playSound("vote-done");
 
     this.players.forEach(p => {
       const isSpy = this.spyIds.includes(p.id);
@@ -1624,10 +1728,11 @@ class Game {
       this.bestStreak = Math.max(this.bestStreak, this.streak);
       localStorage.setItem("spy_streak", String(this.streak));
       localStorage.setItem("spy_best", String(this.bestStreak));
-    } else if (!data.guessCorrect) { this.streak = 0; localStorage.setItem("spy_streak", "0"); }
+    } else { this.streak = 0; localStorage.setItem("spy_streak", "0"); }
     this.renderStreak();
-    if (data.spyCaught || data.guessCorrect) { this.playSound("win"); this.launchConfetti(); }
-    else this.playSound("lose");
+    if (data.spyCaught) { this.playSound("win"); this.launchConfetti(); }
+    else if (data.guessCorrect) { this.playSound("guess-right"); this.launchConfetti(90); }
+    else { this.playSound("lose"); if (!data.guessCorrect && data.guess) this.playSound("guess-wrong"); }
 
     if (data.allowGuess && this.isSpy) setTimeout(() => this.openGuessModal(), 900);
   }
@@ -1638,6 +1743,7 @@ class Game {
     this.spyGuess = null;
     this.$("confirm-guess").disabled = true;
     this.$("guess-search").value = "";
+    this.playSound("guess-open");
     const pool = this.poolFor(this.category);
     options.innerHTML = pool.map(loc => `<div class="vote-option" data-loc="${this.escapeHtml(loc)}"><i class="fa-solid fa-location-dot" style="color:var(--primary)"></i> ${this.escapeHtml(loc)}</div>`).join("");
     options.querySelectorAll(".vote-option").forEach(el => {
@@ -1760,9 +1866,10 @@ class Game {
       this.timeLeft--;
       this.updateTimer();
       this.broadcast({ type: "timer", time: this.timeLeft });
-      if (this.timeLeft === 10) this.playSound("tick");
+      if (this.timeLeft <= 5 && this.timeLeft > 0) this.playSound("tick");
       if (this.timeLeft <= 0) {
         clearInterval(this.timerInterval);
+        this.playSound("go");
         onEnd();
       }
     }, 1000);
@@ -1820,6 +1927,7 @@ class Game {
 
   renderChat() {
     const container = this.$("chat-messages");
+    const nearBottom = (container.scrollHeight - container.scrollTop - container.clientHeight) < 80;
     container.innerHTML = this.chatHistory.map(m => {
       if (m.sys) return `<div class="chat-msg sys"><i class="fa-solid fa-circle-info"></i> ${this.escapeHtml(m.message)}</div>`;
       return `<div class="chat-msg ${m.isOwn ? "own" : "other"}">
@@ -1828,7 +1936,7 @@ class Game {
         ${m.time ? `<div class="time">${this.escapeHtml(m.time)}</div>` : ""}
       </div>`;
     }).join("");
-    container.scrollTop = container.scrollHeight;
+    if (nearBottom) container.scrollTop = container.scrollHeight;
   }
 
   clearChat() {

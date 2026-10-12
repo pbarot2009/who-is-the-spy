@@ -13,7 +13,7 @@
   <meta property="og:description" content="Find the spy before they find the location. Free browser party game for 3–8 players.">
   <meta property="og:type" content="website">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='112' fill='%237c5cfc'/%3E%3Ctext x='256' y='350' font-size='260' text-anchor='middle' fill='white' font-family='sans-serif' font-weight='bold'%3E%3F%3C/text%3E%3C/svg%3E">
-  <link rel="stylesheet" href="styles.css?v=5">
+  <link rel="stylesheet" href="styles.css?v=6">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
@@ -148,7 +148,7 @@
 
       <div class="action-bar" id="action-bar">
         <button id="vote-now-btn" class="action-btn"><i class="fa-solid fa-check-to-slot"></i><span>Vote</span></button>
-        <button id="guess-now-btn" class="action-btn spy-only hidden"><i class="fa-solid fa-map-location-dot"></i><span>Guess</span></button>
+        <button id="guess-now-btn" class="action-btn spy-only ghost-hide"><i class="fa-solid fa-map-location-dot"></i><span>Guess</span></button>
         <button id="voice-btn" class="action-btn"><i class="fa-solid fa-microphone-slash"></i><span>Voice</span></button>
         <button id="sound-btn" class="action-btn"><i class="fa-solid fa-volume-high"></i><span>Sound</span></button>
         <button id="quit-btn" class="action-btn danger"><i class="fa-solid fa-door-open"></i><span>Leave</span></button>
@@ -304,6 +304,6 @@
   </div>
 
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
-  <script src="script.js?v=5"></script>
+  <script src="script.js?v=6"></script>
 </body>
 </html>

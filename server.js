@@ -10,7 +10,7 @@ const PORT = parseInt(process.env.PORT || "3000", 10);
 const ROOT = __dirname;
 // Bump APP_VERSION on every release and keep index.html asset URLs in sync
 // (styles.css?v=N, script.js?v=N) so phones never run stale cached files.
-const APP_VERSION = "5";
+const APP_VERSION = "6";
 
 const TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -52,12 +52,18 @@ function send(req, res, filePath, stats, versioned) {
     "Content-Type": TYPES[ext] || "application/octet-stream",
     "Cache-Control": cacheControl(filePath, versioned),
     "ETag": etag,
+    "Vary": "Accept-Encoding",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "strict-origin-when-cross-origin",
   };
 
   const acceptGzip = (req.headers["accept-encoding"] || "").includes("gzip");
+  if (req.method === "HEAD") {
+    res.writeHead(200, headers);
+    res.end();
+    return;
+  }
   if (acceptGzip && GZIP_RE.test(filePath)) {
     headers["Content-Encoding"] = "gzip";
     res.writeHead(200, headers);

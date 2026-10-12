@@ -50,3 +50,70 @@ This lists the current bugs in this game:
 1. [fixed] Invite links ignored the code — share sends #CODE but the app never read it. The room code now pre-fills from the link.
 2. [fixed] Join gave up after one try — one slow-network hiccup meant failure. Join now retries 3 times with backoff and says exactly what to check.
 3. [fixed] Backgrounding killed the room silently — returning to the tab now reconnects (host) or auto-rejoins (guest).
+
+# round 6 — full audit (Oct 2026, 40 items found)
+
+Severity: P0 = kills rooms, P1 = wrong game outcome, P2 = UI/perf annoyance.
+
+P0 networking/stability:
+- A1. STUN-only ICE, no TURN — symmetric/carrier NAT joins fail silently.
+- A2. Guest rejoin destroys Peer and makes a new ID — ghost duplicate rows.
+- A3. No host migration — host tab closed = room dead for guests.
+- A4. Late join mid-game forces location.reload() — feels like a crash.
+- A5. Missed gameStart strands guests in lobby with no message.
+- A6. Join retry uses fixed 2s delay, no cancel, some paths leave button disabled.
+- A7. Role -> discuss uses setTimeout(3500) — throttled in background tabs, game stalls.
+- A8. JSON.parse on spy_owned / spy_avatar with no try/catch — one bad write = blank app.
+- A9. recordVote has no phase guard, allows self-vote.
+- A10. Guest timer driven by per-second packets — drops cause jumps (need endsAt).
+- A11. voice-state sent twice (broadcast + sendToHost) by guests.
+
+P1 game logic:
+- B1. Bots appear in vote modal and can be voted out — wasted round.
+- B2. Double-spy win rule counts 1-spy+1-citizen tie as caught, single-spy tie says spy survives.
+- B3. Streak not reset when spy escapes and guesses right.
+- B4. Coins are localStorage-only, all citizens paid on spy-caught even with wrong vote.
+- B5. pickNewRound uses sort(()=>Math.random()-0.5) — biased shuffle.
+- B6. No vote change / no abstain — AFK stalls vote until host timer ends.
+
+P2 UI/perf:
+- C1. #game height:100dvh + top-bar = page scroll, chat squeezed.
+- C2. Duplicate .action-bar rule (4-col dead, 5-col live); hidden guess button shifts layout.
+- C3. Custom .dd-list absolute inside overflow-y:auto modal — clipped options.
+- C4. Vote modal X closes with no hint; users think they voted.
+- C5. renderChat rebuilds all 120 msgs per message + forces scroll to bottom.
+- C6. renderPlayers full rebuild on every 3s sync — focus/scroll loss.
+- C7. launchConfetti starts overlapping RAF loops, no resize handling.
+- C8. FA full CDN (~100KB) for ~40 icons; unminified script.js; blur(6px) heavy on low phones.
+- C9. Dev panel rewrites innerHTML every 1s + on every message even when hidden.
+- C10. Server missing Vary: Accept-Encoding; no HEAD handling.
+- C11. iOS remote voice play() reject has no tap-to-unmute fallback.
+- C12. Avatar color injected into style="" with only escapeHtml — needs hex check.
+- C13. Status text differs host/guest; gift-btn 36px < 44px target; mode names truncate at 320px.
+- C14. Timer ticks only at 10s, no 5-4-3-2-1 countdown, no chat-pop/gift/leave sounds.
+- C15. No manifest/SW offline; _headers lacks ?v= immutable rule that vercel.json has.
+
+Sound today: click, join, vote, tick(once), coin, reveal(unused), success, win, lose, error, round.
+Missing: chat-pop, leave, count-5..1, vote-each, vote-done, gift-send/receive, guess-open/right/wrong, volume slider, voice-duck.
+Avatar today: 8 FA glyphs + 8 colors + frames. Plan: layered SVG builder (seed by id), keep CSS frames, no Three.js for 36px avatars.
+Decor verdict: keep CSS blobs + SVG hero + card flip. Three.js optional lazy lobby particles only, default off — full 3D scene costs ~600KB + battery for a chat app.
+
+TS verdict: stay on JS for now. Split script.js into modules, add // @ts-check + JSDoc + tsc --checkJs in CI. Move to TS+Vite only when protocol types pay off (message unions would have caught spyId/spyIds + phase-typo bugs). No React/Next — DOM is too small to justify it.
+
+# round 6 fixes (15 shipped, v6)
+
+1. [fixed] A8 — safe JSON parse for owned/avatar with hex-checked color fallback.
+2. [fixed] A1 (partial) — 5 Google STUN servers + optional TURN from localStorage spy_turn (JSON {urls,username,credential}); without TURN, error text says NAT/relay may block.
+3. [fixed] A2/A6 (partial) — joinRoom reuses live Peer instead of destroy+new; backoff 1s/2s/4s; cancel via attempt guard; buttons always re-enabled.
+4. [fixed] A9 — recordVote needs vote phase, rejects self-vote and unknown ids.
+5. [fixed] B1 — vote modal excludes bots; recordVote rejects bot voter/target.
+6. [fixed] B2 — spy caught only if every eliminated id is a spy (both modes same rule).
+7. [fixed] B3 — any citizen loss resets streak (spy escape + correct guess included).
+8. [fixed] B5 — Fisher-Yates shuffle for spy pick.
+9. [fixed] C1/C2 — game column uses calc(100dvh - topbar); removed dead 4-col rule; guess button uses visibility placeholder so bar never jumps.
+10. [fixed] C4 — closing vote modal mid-vote toasts "Tap Vote to reopen".
+11. [fixed] C5 — chat keeps scroll pos, only autoscrolls when already near bottom; remote chat plays pop.
+12. [fixed] C6/C9 — renderPlayers skips rebuild when roster JSON unchanged; dev panel skips work when hidden.
+13. [fixed] C7 — confetti cancels prior RAF loop, handles resize, scales for DPR.
+14. [fixed] C14 (partial) — ticks at 5-4-3-2-1 + go blip; new chat-pop / leave / gift-send / gift-receive / guess-right / guess-wrong synth sounds; softer error tone.
+15. [fixed] A11/C10/C12/C13 — guests send voice-state once (host broadcasts once); server adds Vary + HEAD; avatar color hex-validated; status shows CODE + count; gift-btn 44px; lobby picks stack on narrow phones.
