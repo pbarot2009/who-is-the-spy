@@ -194,3 +194,12 @@ Reference: Duolingo web/mobile system (16px CTA radius, 4px hard lip, pill badge
 6. [done] Game screen — 2px role banner with lip, pill player chips with lips, 18px chat bubbles with chunky borders.
 7. [done] Results as leaderboard — XP bars per score row relative to top score, winner row gold-lipped, bigger trophy icon, chunkier modal titles/close buttons/toasts/score rows/room card/player rows.
 8. [checked] Full audit — node --check on all 3 JS files, every JS-referenced id exists in HTML (only dynamic voice-${pid} aside), every new class styled, braces balanced, dead logo-mark CSS removed.
+
+# round 11 — finishing pass: controls, sound, mascot (v12)
+
+1. [done] Real custom checkbox — chunky rounded box with lip, green check fill, press physics, focus ring. Wrapped both Settings toggles (valid sibling labels, ids kept).
+2. [done] Real custom slider — thick pill track, 30px knob with lip, no native look; number-input spinners removed.
+3. [done] Click sound on every control — delegated listener now covers modal-X, dropdown buttons, chat send, dev buttons, gift/kick; 70ms dedupe keeps single blips.
+4. [done] Unstyled sweep — scripted class audit over HTML+JS vs CSS; one dead class (gold) removed, everything else traced to a rule.
+5. [done] New mascot — detective owl (ear tufts, spy band, beak, fedora, magnifier, theme-tinted body) replacing the old figure.
+6. [done] Micro polish — modal grabber bar, selection color, placeholder tone, dd option press + selected ring, emote pills with lips, chunky shop buttons, send button lip, chunky gift/kick buttons with hover, bolder chat header, how-to summary hover, deduped focus rules.

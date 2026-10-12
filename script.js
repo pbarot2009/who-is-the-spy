@@ -794,7 +794,7 @@ class Game {
     ["theme-select", "category-select", "mode-select", "gift-to"].forEach(id => this.enhanceSelect(this.$(id)));
     // click blip on every tappable control (70ms dedupe kills double-fires)
     document.addEventListener("click", e => {
-      const t = e.target && e.target.closest ? e.target.closest(".btn,.icon-btn,.action-btn,.dd-opt,.vote-option,.pick-grid button,.tab-row button,.emote-bar button,.shop-item button") : null;
+      const t = e.target && e.target.closest ? e.target.closest(".btn,.icon-btn,.action-btn,.dd-btn,.dd-opt,.vote-option,.modal-x,.pick-grid button,.tab-row button,.emote-bar button,.shop-item button,.chat-input button,.dev-buttons button,.gift-btn,.kick-btn,.duo-check") : null;
       if (t && !t.disabled) this.playSound("click");
     });
     // music never plays to an empty room — stop it backgrounded
