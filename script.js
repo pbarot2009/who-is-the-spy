@@ -101,14 +101,34 @@ function safeParseJSON(raw, fallback) {
   } catch (e) { return fallback; }
 }
 
-// Seeded SVG faces — zero assets, offline-safe. Seed picks bg/skin/eyes/mouth/extra.
-const SVG_SKINS = ["#ffd9b3", "#f1c27d", "#e0ac69", "#c68642", "#8d5524", "#ffdbac"];
+// Device storage with schema keys. Private-mode / quota throws never break boot.
+const store = {
+  get(k, f) { try { const v = localStorage.getItem(k); return v == null ? f : v; } catch (e) { return f; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
+  del(k) { try { localStorage.removeItem(k); } catch (e) {} }
+};
+const AVATAR_KEY = "spy_avatar_v2"; // {v:2, skin,bg,eyes,brows,mouth,hair,extra,frame}
+const AVATAR_LEGACY_KEY = "spy_avatar";
+
+// Seeded PRNG (Mulberry32 over FNV-1a) — same seed, same face, everywhere.
 function hashSeed(s) {
   let h = 2166136261;
   const str = String(s || "?");
   for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
   return h >>> 0;
 }
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// Seeded SVG faces v1 (legacy) — kept so old svgSeed avatars still render.
+const SVG_SKINS = ["#ffd9b3", "#f1c27d", "#e0ac69", "#c68642", "#8d5524", "#ffdbac"];
 function svgFace(seed) {
   const h = hashSeed(seed);
   const bg = COLORS[h % COLORS.length];
@@ -136,6 +156,90 @@ function svgFace(seed) {
 }
 function randomSeed() { return Math.random().toString(36).slice(2, 10); }
 
+function randomSeed() { return Math.random().toString(36).slice(2, 10); }
+
+// ---------- Avatar v2: layered components, DiceBear-style ----------
+// Each category is an array of variants; the builder picks by index,
+// Shuffle picks by seeded PRNG. Renderer is pure: same object, same face.
+const AV2_SKIN = ["#ffd9b3", "#f1c27d", "#e0ac69", "#c68642", "#8d5524", "#ffdbac"];
+const AV2_BG = [...COLORS];
+const AV2_EYES = [
+  { name: "Dots", svg: `<circle cx="25" cy="34" r="2.6" fill="#20202a"/><circle cx="39" cy="34" r="2.6" fill="#20202a"/>` },
+  { name: "Happy", svg: `<path d="M22 35q3-3.4 6 0" stroke="#20202a" stroke-width="2.4" fill="none" stroke-linecap="round"/><path d="M36 35q3-3.4 6 0" stroke="#20202a" stroke-width="2.4" fill="none" stroke-linecap="round"/>` },
+  { name: "Wink", svg: `<circle cx="25" cy="34" r="2.6" fill="#20202a"/><path d="M36 34q3-2.6 6 0" stroke="#20202a" stroke-width="2.4" fill="none" stroke-linecap="round"/>` },
+  { name: "Sleepy", svg: `<path d="M22 34q3 2.6 6 0" stroke="#20202a" stroke-width="2.4" fill="none" stroke-linecap="round"/><path d="M36 34q3 2.6 6 0" stroke="#20202a" stroke-width="2.4" fill="none" stroke-linecap="round"/>` },
+  { name: "Sparkle", svg: `<path d="M25 30l1.2 2.8 2.8 1.2-2.8 1.2-1.2 2.8-1.2-2.8-2.8-1.2 2.8-1.2z" fill="#20202a"/><circle cx="39" cy="34" r="2.6" fill="#20202a"/>` },
+  { name: "Wow", svg: `<circle cx="25" cy="34" r="3.4" fill="#fff" stroke="#20202a" stroke-width="1.6"/><circle cx="39" cy="34" r="3.4" fill="#fff" stroke="#20202a" stroke-width="1.6"/><circle cx="25" cy="34" r="1.4" fill="#20202a"/><circle cx="39" cy="34" r="1.4" fill="#20202a"/>` }
+];
+const AV2_BROWS = [
+  { name: "None", svg: "" },
+  { name: "Soft", svg: `<path d="M21 27q4-2.6 8-1" stroke="#20202a" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M35 26q4-1.6 8 1" stroke="#20202a" stroke-width="2" fill="none" stroke-linecap="round"/>` },
+  { name: "Bold", svg: `<line x1="21" y1="27" x2="29" y2="26" stroke="#20202a" stroke-width="2.6" stroke-linecap="round"/><line x1="35" y1="26" x2="43" y2="27" stroke="#20202a" stroke-width="2.6" stroke-linecap="round"/>` },
+  { name: "Sly", svg: `<line x1="21" y1="29" x2="29" y2="25" stroke="#20202a" stroke-width="2.4" stroke-linecap="round"/><line x1="35" y1="25" x2="43" y2="29" stroke="#20202a" stroke-width="2.4" stroke-linecap="round"/>` }
+];
+const AV2_MOUTH = [
+  { name: "Smile", svg: `<path d="M25 44q7 6 14 0" stroke="#20202a" stroke-width="2.6" fill="none" stroke-linecap="round"/>` },
+  { name: "Smirk", svg: `<path d="M26 44q8 5 13-1" stroke="#20202a" stroke-width="2.6" fill="none" stroke-linecap="round"/>` },
+  { name: "Grin", svg: `<rect x="25" y="42" width="14" height="6" rx="3" fill="#fff" stroke="#20202a" stroke-width="1.6"/><line x1="29" y1="42" x2="29" y2="48" stroke="#20202a" stroke-width="1.2"/><line x1="35" y1="42" x2="35" y2="48" stroke="#20202a" stroke-width="1.2"/>` },
+  { name: "Flat", svg: `<line x1="27" y1="45" x2="37" y2="45" stroke="#20202a" stroke-width="2.6" stroke-linecap="round"/>` },
+  { name: "Open", svg: `<ellipse cx="32" cy="45" rx="4.5" ry="5.5" fill="#20202a"/><ellipse cx="32" cy="47" rx="2.2" ry="2.4" fill="#ff8fa3"/>` },
+  { name: "Fangs", svg: `<path d="M25 43q7 5 14 0v3q-7 4-14 0z" fill="#fff" stroke="#20202a" stroke-width="1.6"/><path d="M27 45l2 3 2-3zM35 45l2 3 2-3z" fill="#20202a"/>` }
+];
+const AV2_HAIR = [
+  { name: "Bald", svg: "" },
+  { name: "Spiky", svg: `<path d="M14 30L18 16l6 7 4-10 5 9 5-8 4 9 6-6 2 12q-18-10-36 1z" fill="#20202a"/>` },
+  { name: "Bob", svg: `<path d="M12 34q0-20 20-20t20 20v4q-4 2-6-2v-4q-14 4-28 0v4q-2 4-6 2z" fill="#20202a"/>` },
+  { name: "Mohawk", svg: `<path d="M27 8q1 8 0 12h10q-1-6 0-12q-5-3-10 0z" fill="#e11d48"/><rect x="28" y="18" width="8" height="6" fill="#20202a"/>` },
+  { name: "Bun", svg: `<circle cx="32" cy="12" r="7" fill="#20202a"/><path d="M14 32q2-16 18-16t18 16q-18-6-36 0z" fill="#20202a"/>` },
+  { name: "Curls", svg: `<g fill="#20202a"><circle cx="18" cy="26" r="6"/><circle cx="26" cy="17" r="6"/><circle cx="38" cy="17" r="6"/><circle cx="46" cy="26" r="6"/></g>` },
+  { name: "Sweep", svg: `<path d="M12 30q4-16 22-16 14 0 18 10-10-4-22-2-10 2-18 8z" fill="#20202a"/>` },
+  { name: "Pony", svg: `<path d="M14 32q2-16 18-16t18 14l8 8q2 6-3 7l-9-7q-14 3-32-6z" fill="#20202a"/>` }
+];
+const AV2_EXTRA = [
+  { name: "None", svg: "" },
+  { name: "Blush", svg: `<circle cx="20" cy="40" r="3" fill="#ff8fa3" opacity="0.7"/><circle cx="44" cy="40" r="3" fill="#ff8fa3" opacity="0.7"/>` },
+  { name: "Glasses", svg: `<g stroke="#20202a" stroke-width="2" fill="none"><circle cx="25" cy="34" r="5.5"/><circle cx="39" cy="34" r="5.5"/><line x1="30.5" y1="34" x2="33.5" y2="34"/></g>` },
+  { name: "Shades", svg: `<g fill="#20202a"><rect x="19" y="30" width="12" height="7" rx="3.5"/><rect x="33" y="30" width="12" height="7" rx="3.5"/><rect x="30" y="32" width="4" height="2.4"/></g>` },
+  { name: "Band", svg: `<path d="M13 27q19-11 38 0l-1.5-6q-17.5-9-35 0z" fill="#e11d48"/>` },
+  { name: "Star", svg: `<path d="M46 42l1 2.2 2.2 1-2.2 1-1 2.2-1-2.2-2.2-1 2.2-1z" fill="#fbbf24" stroke="#20202a" stroke-width="0.8"/>` }
+];
+const AV2_TABS = [
+  { key: "skin", name: "Skin", opts: AV2_SKIN },
+  { key: "hair", name: "Hair", opts: AV2_HAIR },
+  { key: "eyes", name: "Eyes", opts: AV2_EYES },
+  { key: "brows", name: "Brows", opts: AV2_BROWS },
+  { key: "mouth", name: "Mouth", opts: AV2_MOUTH },
+  { key: "extra", name: "Gear", opts: AV2_EXTRA },
+  { key: "bg", name: "Back", opts: AV2_BG }
+];
+
+function av2Default() {
+  return { v: 2, skin: 1, bg: 0, eyes: 0, brows: 1, mouth: 0, hair: 1, extra: 0, frame: "frame-none" };
+}
+function av2Shuffle() {
+  const r = mulberry32((Date.now() ^ (Math.random() * 1e9)) >>> 0);
+  const pick = n => Math.floor(r() * n);
+  return { v: 2, skin: pick(6), bg: pick(8), eyes: pick(6), brows: pick(4), mouth: pick(6), hair: pick(8), extra: pick(6), frame: "frame-none" };
+}
+function av2FromSeed(seed) {
+  const r = mulberry32(hashSeed(seed));
+  const pick = n => Math.floor(r() * n);
+  return { v: 2, skin: pick(6), bg: pick(8), eyes: pick(6), brows: pick(4), mouth: pick(6), hair: pick(8), extra: pick(6), frame: "frame-none" };
+}
+function svgAvatarV2(a) {
+  const skin = AV2_SKIN[a.skin] || AV2_SKIN[0];
+  const bg = AV2_BG[a.bg] || AV2_BG[0];
+  const eyes = (AV2_EYES[a.eyes] || AV2_EYES[0]).svg;
+  const brows = (AV2_BROWS[a.brows] || AV2_BROWS[0]).svg;
+  const mouth = (AV2_MOUTH[a.mouth] || AV2_MOUTH[0]).svg;
+  const hair = (AV2_HAIR[a.hair] || AV2_HAIR[0]).svg;
+  const extra = (AV2_EXTRA[a.extra] || AV2_EXTRA[0]).svg;
+  return `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-hidden="true">`
+    + `<circle cx="32" cy="32" r="32" fill="${bg}"/>`
+    + `<circle cx="32" cy="37" r="20" fill="${skin}"/>`
+    + brows + eyes + mouth + hair + extra + `</svg>`;
+}
+
 class Game {
   constructor() {
     this.peer = null;
@@ -160,6 +264,8 @@ class Game {
     this.seenMsgIds = new Set();
     this.soundEnabled = localStorage.getItem("spy_sound") !== "false";
     this.volume = this.clampInt(localStorage.getItem("spy_vol"), 70, 0, 100) / 100;
+    this.musicOn = store.get("spy_music", "true") !== "false";
+    this.music = null;
     this.discussTime = this.clampInt(localStorage.getItem("spy_discuss"), 120, 30, 300);
     this.voteTime = this.clampInt(localStorage.getItem("spy_vote"), 45, 15, 120);
     this.devMode = false;
@@ -173,9 +279,7 @@ class Game {
     const ownedRaw = safeParseJSON(localStorage.getItem("spy_owned"), ["frame-none"]);
     this.owned = Array.isArray(ownedRaw) ? ownedRaw.filter(x => typeof x === "string").slice(0, 40) : ["frame-none"];
     if (!this.owned.includes("frame-none")) this.owned.unshift("frame-none");
-    const avatarRaw = safeParseJSON(localStorage.getItem("spy_avatar"), null);
-    this.avatar = this.sanitizeAvatar(avatarRaw);
-    if (!avatarRaw && !this.avatar.svgSeed) this.avatar.svgSeed = randomSeed(); // fresh users start with a generated face
+    this.avatar = this.loadAvatar();
     this.streak = this.clampInt(localStorage.getItem("spy_streak"), 0, 0, 999);
     this.bestStreak = this.clampInt(localStorage.getItem("spy_best"), 0, 0, 999);
     this.category = localStorage.getItem("spy_cat") || "classic";
@@ -205,10 +309,34 @@ class Game {
   sanitizeAvatar(a) {
     const fallback = { icon: "fa-user-secret", color: "#7c5cfc", frame: "frame-none" };
     if (!a || typeof a !== "object") return { ...fallback };
-    const icon = typeof a.icon === "string" && /^fa-[a-z0-9-]+$/.test(a.icon) ? a.icon : fallback.icon;
     const frame = typeof a.frame === "string" && /^[a-z0-9-]+$/.test(a.frame) ? a.frame : "frame-none";
+    if (a.v === 2) {
+      const clamp = (v, n) => (Number.isInteger(v) && v >= 0 && v < n) ? v : 0;
+      return {
+        v: 2,
+        skin: clamp(a.skin, 6), bg: clamp(a.bg, 8), eyes: clamp(a.eyes, 6),
+        brows: clamp(a.brows, 4), mouth: clamp(a.mouth, 6),
+        hair: clamp(a.hair, 8), extra: clamp(a.extra, 6), frame
+      };
+    }
+    const icon = typeof a.icon === "string" && /^fa-[a-z0-9-]+$/.test(a.icon) ? a.icon : fallback.icon;
     const svgSeed = typeof a.svgSeed === "string" && /^[A-Za-z0-9-]{1,24}$/.test(a.svgSeed) ? a.svgSeed : null;
     return { icon, color: this.validColor(a.color), frame, svgSeed };
+  }
+
+  loadAvatar() {
+    // v2 key first; migrate v1 (svgSeed or FA icon) once, then drop the old key.
+    const v2 = safeParseJSON(store.get(AVATAR_KEY, null), null);
+    if (v2 && v2.v === 2) return this.sanitizeAvatar(v2);
+    const legacyRaw = store.get(AVATAR_LEGACY_KEY, null);
+    const legacy = this.sanitizeAvatar(safeParseJSON(legacyRaw, null));
+    let next;
+    if (legacy.svgSeed) next = { ...av2FromSeed(legacy.svgSeed), frame: legacy.frame };
+    else if (legacyRaw) next = { ...av2Shuffle(), frame: legacy.frame };
+    else next = { ...av2Shuffle() };
+    store.set(AVATAR_KEY, JSON.stringify(next));
+    if (legacyRaw) store.del(AVATAR_LEGACY_KEY);
+    return next;
   }
 
   iceConfig() { return buildICE(); }
@@ -271,6 +399,11 @@ class Game {
 
   playSound(type = "click") {
     if (!this.soundEnabled) return;
+    try {
+      const now = performance.now();
+      if (type === this._lastS && now - this._lastST < 70) return; // collapse double-fires
+      this._lastS = type; this._lastST = now;
+    } catch (e) {}
     switch (type) {
       case "click": this.tone(520, 0.07); break;
       case "join": this.tone(523, 0.1); this.tone(784, 0.14, "sine", 0.16, 0.09); break;
@@ -295,6 +428,110 @@ class Game {
       case "round": this.tone(440, 0.1); this.tone(660, 0.12, "sine", 0.16, 0.1); break;
       default: this.tone(520, 0.07);
     }
+  }
+
+  // ---------- music: zero-asset sequencer, lookahead scheduler ----------
+  musicBus() {
+    if (!this._musicGain && this.audioCtx) {
+      this._musicGain = this.audioCtx.createGain();
+      this._musicGain.gain.value = 0.4;
+      this._musicGain.connect(this.masterGain);
+    }
+    return this._musicGain;
+  }
+
+  mtone(freq, dur, type, vol, when, lpf) {
+    try {
+      const o = this.audioCtx.createOscillator();
+      const g = this.audioCtx.createGain();
+      const f = this.audioCtx.createBiquadFilter();
+      o.connect(f); f.connect(g); g.connect(this.musicBus());
+      o.type = type || "sine";
+      o.frequency.setValueAtTime(freq, when);
+      f.type = "lowpass";
+      f.frequency.setValueAtTime(lpf || 2400, when);
+      g.gain.setValueAtTime(0.0001, when);
+      g.gain.exponentialRampToValueAtTime(Math.max(0.0002, vol), when + 0.03);
+      g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
+      o.start(when); o.stop(when + dur + 0.03);
+    } catch (e) {}
+  }
+
+  startLobbyMusic() {
+    if (!this.musicOn || !this.soundEnabled) return;
+    if (this.phase !== "lobby") return;
+    if (this.music && this.music.mode === "lobby") return;
+    if (!this.ensureAudio()) return;
+    if (this.audioCtx.state !== "running") return;
+    this.stopMusic(true);
+    // I–V–vi–IV in C, 8 steps per chord, A/B pluck phrases alternate (20s loop).
+    // Bass runs 24 steps against the 32-step melody, so the full cycle repeats at ~30s.
+    const N = { C3: 130.81, G2: 98.0, A2: 110.0, F2: 87.31, C4: 261.63, D4: 293.66, E4: 329.63, G3: 196.0, B3: 246.94, A3: 220.0, F3: 174.61, C5: 523.25, D5: 587.33, E5: 659.25, G5: 783.99, A5: 880.0, C6: 1046.5 };
+    const roots = [N.C3, N.G2, N.A2, N.F2];
+    const pads = [[N.C4, N.E4, N.G3], [N.G3, N.B3, N.D4], [N.A3, N.C4, N.E4], [N.F3, N.A3, N.C4]];
+    const bassPat = [1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0];
+    const pluckA = [N.C5, 0, N.E5, 0, N.G5, 0, N.E5, 0, N.A5, 0, N.G5, 0, N.E5, 0, N.D5, 0, N.C5, 0, N.D5, 0, N.E5, 0, N.G5, 0, N.E5, 0, N.D5, 0, N.C5, 0, 0, 0];
+    const pluckB = [N.E5, 0, N.G5, 0, N.A5, 0, N.G5, 0, N.C6, 0, N.A5, 0, N.G5, 0, N.E5, 0, N.D5, 0, N.E5, 0, N.G5, 0, N.A5, 0, N.G5, 0, N.E5, 0, 0, 0, 0, 0];
+    this.music = { mode: "lobby", step: 0, bpm: 96, spb: 2, len: 32, nextT: this.audioCtx.currentTime + 0.08, timer: null, N, roots, pads, bassPat, plucks: [pluckA, pluckB], phrase: 0 };
+    this.music.timer = setInterval(() => this.musicTick(), 25);
+  }
+
+  musicTick() {
+    const m = this.music;
+    if (!m || !this.audioCtx) return;
+    const stepDur = 60 / m.bpm / m.spb;
+    let guard = 0;
+    while (m.nextT < this.audioCtx.currentTime + 0.12 && guard++ < 16) {
+      this.musicStep(m, m.step, m.nextT, stepDur);
+      m.step++;
+      if (m.step >= m.len) { m.step = 0; m.phrase = (m.phrase + 1) % m.plucks.length; }
+      m.nextT += stepDur;
+    }
+  }
+
+  musicStep(m, step, when, stepDur) {
+    const block = Math.floor(step / 8) % 4;
+    if (step % 8 === 0) {
+      m.pads[block].forEach(f => this.mtone(f, stepDur * 8, "triangle", 0.035, when, 1200));
+    }
+    if (m.bassPat[step % m.bassPat.length]) {
+      this.mtone(m.roots[block], stepDur * 1.8, "triangle", 0.075, when, 600);
+    }
+    const pl = m.plucks[m.phrase][step];
+    if (pl && Math.random() > 0.12) this.mtone(pl, stepDur * 1.4, "sine", 0.04, when, 3200);
+  }
+
+  stopMusic(silent) {
+    if (this.music && this.music.timer) { try { clearInterval(this.music.timer); } catch (e) {} }
+    this.music = null;
+    if (!silent) return;
+  }
+
+  playPhrase(notes) {
+    // one-shot stinger: [{f, t (beats), d, type, g}]
+    if (!this.musicOn || !this.soundEnabled) return;
+    if (!this.ensureAudio()) return;
+    const t0 = this.audioCtx.currentTime + 0.05;
+    const beat = 60 / 132;
+    notes.forEach(n => {
+      (Array.isArray(n.f) ? n.f : [n.f]).forEach(f => this.mtone(f, (n.d || 1) * beat, n.type || "triangle", n.g || 0.14, t0 + (n.t || 0) * beat, n.lpf || 3200));
+    });
+  }
+
+  playWinPhrase() {
+    const N = { C4: 261.63, E4: 329.63, G4: 392.0, C5: 523.25, E5: 659.25, G5: 783.99, C6: 1046.5 };
+    this.playPhrase([
+      { f: N.C4, t: 0, d: 1 }, { f: N.E4, t: 1, d: 1 }, { f: N.G4, t: 2, d: 1 }, { f: N.C5, t: 3, d: 1.5 },
+      { f: N.E5, t: 4.5, d: 1 }, { f: N.G5, t: 5.5, d: 1 }, { f: N.C6, t: 6.5, d: 3 },
+      { f: [N.C5, N.E5, N.G5], t: 6.5, d: 3, g: 0.07 }
+    ]);
+  }
+
+  playLosePhrase() {
+    this.playPhrase([
+      { f: 440.0, t: 0, d: 2 }, { f: 349.23, t: 2, d: 2 }, { f: 293.66, t: 4, d: 2 }, { f: 261.63, t: 6, d: 4, g: 0.12 },
+      { f: 110.0, t: 6, d: 4, g: 0.06 }
+    ]);
   }
 
   peerIdFor(code) { return PEER_PREFIX + code.toUpperCase(); }
@@ -416,6 +653,13 @@ class Game {
       localStorage.setItem("spy_vol", String(Math.round(this.volume * 100)));
       this.ensureAudio();
     };
+    this.$("music-toggle").checked = this.musicOn;
+    this.$("music-toggle").onchange = e => {
+      this.musicOn = e.target.checked;
+      store.set("spy_music", String(this.musicOn));
+      if (!this.musicOn) this.stopMusic(true);
+      else this.startLobbyMusic();
+    };
     this.$("discuss-time").onchange = e => {
       this.discussTime = this.clampInt(e.target.value, 120, 30, 300);
       e.target.value = this.discussTime;
@@ -514,10 +758,12 @@ class Game {
           if (a.paused) { const p = a.play && a.play(); if (p && p.catch) p.catch(() => {}); }
         });
       } catch (e) {}
+      this.startLobbyMusic();
     }, { passive: true });
     // mobile backgrounding drops sockets — heal on return
     document.addEventListener("visibilitychange", () => {
       if (document.hidden !== false || !this.peer || !this.roomCode) return;
+      if (this.phase === "lobby") this.startLobbyMusic();
       if (this.isHost) {
         if (this.peer.disconnected) { try { this.peer.reconnect(); } catch (e) {} }
         // backgrounded tabs throttle setTimeout — heal role phase by timestamp
@@ -545,6 +791,15 @@ class Game {
     });
     this.buildLobbyPicks();
     ["theme-select", "category-select", "mode-select", "gift-to"].forEach(id => this.enhanceSelect(this.$(id)));
+    // click blip on every tappable control (70ms dedupe kills double-fires)
+    document.addEventListener("click", e => {
+      const t = e.target && e.target.closest ? e.target.closest(".btn,.icon-btn,.action-btn,.dd-opt,.vote-option,.pick-grid button,.tab-row button,.emote-bar button,.shop-item button") : null;
+      if (t && !t.disabled) this.playSound("click");
+    });
+    // music never plays to an empty room — stop it backgrounded
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden === true) this.stopMusic(true);
+    });
     // tap outside any custom dropdown closes it (scroll too — fixed lists don't follow)
     document.addEventListener("pointerdown", e => {
       if (!e.target || !e.target.closest || !e.target.closest(".dd")) this.closeAllDropdowns();
@@ -718,6 +973,9 @@ class Game {
   avatarHtml(p, size = 36) {
     const raw = p.avatar || { icon: "fa-user-secret", color: p.color || "#7c5cfc", frame: "frame-none" };
     const a = this.sanitizeAvatar(raw);
+    if (a.v === 2) {
+      return `<div class="avatar av-svg ${a.frame && a.frame !== "frame-none" ? a.frame : ""}" style="width:${size}px;height:${size}px">${svgAvatarV2(a)}</div>`;
+    }
     if (a.svgSeed) {
       return `<div class="avatar av-svg ${a.frame && a.frame !== "frame-none" ? a.frame : ""}" style="width:${size}px;height:${size}px">${svgFace(a.svgSeed)}</div>`;
     }
@@ -733,25 +991,53 @@ class Game {
   }
 
   renderAvatarBuilder() {
-    const t = this.sanitizeAvatar(this.tmpAvatar);
+    let t = this.sanitizeAvatar(this.tmpAvatar);
+    if (t.v !== 2 && !t.svgSeed) t = { ...av2Shuffle(), frame: t.frame || "frame-none" };
+    if (t.v !== 2 && t.svgSeed) t = { ...av2FromSeed(t.svgSeed), frame: t.frame || "frame-none" };
     this.tmpAvatar = { ...t };
-    this.$("avatar-preview").innerHTML = t.svgSeed
-      ? `<div class="big av-svg ${t.frame !== "frame-none" ? t.frame : ""}">${svgFace(t.svgSeed)}</div>`
-      : `<div class="big ${t.frame !== "frame-none" ? t.frame : ""}" style="background:${this.escapeHtml(t.color)}"><i class="fa-solid ${t.icon}"></i></div>`;
-    this.$("avatar-shuffle").onclick = () => { this.tmpAvatar.svgSeed = randomSeed(); this.renderAvatarBuilder(); this.playSound("click"); };
-    this.$("avatar-classic").onclick = () => { this.tmpAvatar.svgSeed = null; this.renderAvatarBuilder(); this.playSound("click"); };
-    this.$("avatar-icons").innerHTML = AVATAR_ICONS.map(ic => `<button data-ic="${ic}" class="${t.icon === ic ? "sel" : ""}"><i class="fa-solid ${ic}"></i></button>`).join("");
-    this.$("avatar-colors").innerHTML = COLORS.map(c => `<button data-c="${c}" class="swatch ${t.color === c ? "sel" : ""}" style="background:${c}" aria-label="${c}">·</button>`).join("");
+    if (!this.avTab || !AV2_TABS.some(x => x.key === this.avTab)) this.avTab = "hair";
+    this.$("avatar-preview").innerHTML = `<div class="big av-svg ${t.frame !== "frame-none" ? t.frame : ""}">${svgAvatarV2(t)}</div>`;
+    this.$("avatar-shuffle").onclick = () => {
+      const keepFrame = this.tmpAvatar.frame;
+      this.tmpAvatar = { ...av2Shuffle(), frame: keepFrame };
+      this.renderAvatarBuilder(); this.playSound("click");
+    };
+    this.$("avatar-reset").onclick = () => {
+      const keepFrame = this.tmpAvatar.frame;
+      this.tmpAvatar = { ...av2Default(), frame: keepFrame };
+      this.renderAvatarBuilder(); this.playSound("click");
+    };
+    this.$("avatar-tabs").innerHTML = AV2_TABS.map(tab =>
+      `<button data-tab="${tab.key}" class="${this.avTab === tab.key ? "sel" : ""}">${tab.name}</button>`
+    ).join("");
+    this.$("avatar-tabs").querySelectorAll("button").forEach(b => {
+      b.onclick = () => { this.avTab = b.dataset.tab; this.renderAvatarBuilder(); this.playSound("click"); };
+    });
+    const tab = AV2_TABS.find(x => x.key === this.avTab);
+    const box = this.$("avatar-options");
+    if (tab.key === "skin" || tab.key === "bg") {
+      const pal = tab.key === "skin" ? AV2_SKIN : AV2_BG;
+      box.innerHTML = pal.map((c, i) =>
+        `<button data-i="${i}" class="swatch ${t[tab.key] === i ? "sel" : ""}" style="background:${c}" aria-label="${tab.name} ${i + 1}">·</button>`
+      ).join("");
+    } else {
+      box.innerHTML = tab.opts.map((o, i) => {
+        const trial = { ...t, [tab.key]: i };
+        return `<button data-i="${i}" class="opt ${t[tab.key] === i ? "sel" : ""}" title="${this.escapeHtml(o.name)}">${svgAvatarV2(trial)}</button>`;
+      }).join("");
+    }
+    box.querySelectorAll("button").forEach(b => {
+      b.onclick = () => { this.tmpAvatar[tab.key] = parseInt(b.dataset.i, 10); this.renderAvatarBuilder(); this.playSound("click"); };
+    });
     const frames = ["frame-none", ...this.owned.filter(o => o.startsWith("frame-"))];
     this.$("avatar-frames").innerHTML = frames.map(f => `<button data-f="${f}" class="${t.frame === f ? "sel" : ""}" title="${this.escapeHtml(f)}"><i class="fa-solid fa-award"></i></button>`).join("");
-    this.$("avatar-icons").querySelectorAll("button").forEach(b => { b.onclick = () => { this.tmpAvatar.icon = b.dataset.ic; this.tmpAvatar.svgSeed = null; this.renderAvatarBuilder(); }; });
-    this.$("avatar-colors").querySelectorAll("button").forEach(b => { b.onclick = () => { this.tmpAvatar.color = b.dataset.c; this.renderAvatarBuilder(); }; });
     this.$("avatar-frames").querySelectorAll("button").forEach(b => { b.onclick = () => { this.tmpAvatar.frame = b.dataset.f; this.renderAvatarBuilder(); }; });
   }
 
   saveAvatar() {
     this.avatar = this.sanitizeAvatar(this.tmpAvatar);
-    localStorage.setItem("spy_avatar", JSON.stringify(this.avatar));
+    if (this.avatar.v !== 2 && !this.avatar.svgSeed) this.avatar = { ...av2Shuffle(), frame: this.avatar.frame || "frame-none" };
+    store.set(AVATAR_KEY, JSON.stringify(this.avatar));
     this.playSound("success");
     this.toast("Avatar saved", "success");
     this.$("avatar-modal").classList.add("hidden");
@@ -1960,6 +2246,7 @@ class Game {
   }
 
   showGame() {
+    this.stopMusic(true);
     this.$("lobby").classList.remove("active");
     this.$("game").classList.add("active");
     this.renderChat();
@@ -2210,9 +2497,10 @@ class Game {
       localStorage.setItem("spy_best", String(this.bestStreak));
     } else { this.streak = 0; localStorage.setItem("spy_streak", "0"); }
     this.renderStreak();
-    if (data.spyCaught) { this.playSound("win"); this.launchConfetti(); }
-    else if (data.guessCorrect) { this.playSound("guess-right"); this.launchConfetti(90); }
-    else { this.playSound("lose"); if (!data.guessCorrect && data.guess) this.playSound("guess-wrong"); }
+    this.stopMusic(true);
+    if (data.spyCaught) { this.playSound("win"); this.playWinPhrase(); this.launchConfetti(); }
+    else if (data.guessCorrect) { this.playSound("guess-right"); this.playWinPhrase(); this.launchConfetti(90); }
+    else { this.playSound("lose"); this.playLosePhrase(); if (!data.guessCorrect && data.guess) this.playSound("guess-wrong"); }
 
     if (data.allowGuess && this.isSpy) setTimeout(() => this.openGuessModal(), 900);
   }
@@ -2345,9 +2633,11 @@ class Game {
       this.$("guest-wait").innerHTML = `<i class="fa-solid fa-hourglass-half"></i> Waiting for the host to start…`;
     }
     this.renderPlayers();
+    this.startLobbyMusic();
   }
 
   showFinalScores(data) {
+    this.stopMusic(true);
     this.hideResults();
     this.hideVoteModal();
     this.phase = "reveal";
@@ -2357,9 +2647,7 @@ class Game {
     this.$("results-icon").style.background = "var(--warning)";
     content.innerHTML = (data.scores || []).map((s, i) => `
       <div class="score-row ${i === 0 ? "winner" : ""}">
-        ${s.avatar && s.avatar.svgSeed
-          ? `<span class="avatar av-svg" style="width:30px;height:30px">${svgFace(s.avatar.svgSeed)}</span>`
-          : `<span class="avatar" style="background:${this.escapeHtml(s.color || "#7c5cfc")}">${s.avatar && s.avatar.icon ? `<i class="fa-solid ${s.avatar.icon}"></i>` : this.escapeHtml((s.name || "?")[0].toUpperCase())}</span>`}
+        ${this.avatarHtml({ avatar: s.avatar, name: s.name }, 30)}
         <span>${i === 0 ? '<i class="fa-solid fa-trophy" style="color:var(--warning)"></i> ' : `#${i + 1} `}${this.escapeHtml(s.name)}</span>
         <span class="pts">${s.score} pts</span>
       </div>`).join("");

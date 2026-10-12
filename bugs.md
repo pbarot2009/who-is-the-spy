@@ -158,3 +158,20 @@ Left as documented future work (needs server or heavy rework, not P2P-client fix
 - FA CDN subset (~100KB) — replace with inline SVG icon sprite.
 - Server-minted coins/scores (needs authority backend).
 - _headers ?v= immutable rule (Cloudflare _headers can't match query strings).
+
+# round 9 — Matiks-grade avatars, real music, Duolingo UI (v9)
+
+Avatars (DiceBear pattern: component variants + FNV-1a/Mulberry32 seeded picks):
+1. [done] Layered v2 faces — 6 skins, 8 hair, 6 eyes, 4 brows, 6 mouths, 6 gear, 8 backs. Pure renderer: same object, same face, any size.
+2. [done] Tabbed builder — Skin/Hair/Eyes/Brows/Mouth/Gear/Back tabs, live full-face thumbnails per option, big preview, Shuffle + Reset, Shop frames kept.
+3. [done] Proper storage — versioned spy_avatar_v2 key, throw-safe store helpers (private-mode proof), v1 svgSeed/FA auto-migrated once, old key dropped.
+
+Music (zero assets, lookahead scheduler per Web Audio best practice):
+4. [done] Lobby loop — I–V–vi–IV pads + 24-step bass against 32-step melody with alternating pluck phrases (~30s before exact repeat), sine/triangle through lowpass, starts on first gesture only.
+5. [done] Win fanfare + lose sting as composed phrases layered over the existing SFX; music stops the second gameplay starts, on finals, and when the tab hides.
+6. [done] Lobby music toggle in Settings; volume slider drives SFX + music (music bus at 0.4, ducked with voice).
+7. [done] Click blip on every control via one delegated listener; 70ms same-type dedupe kills double-fires with the explicit plays.
+
+Duolingo reference (chunky lip system, pill badges, rounded display type):
+8. [done] 3D lip buttons — 4px hard bottom lip on primary/secondary/ghost (auto-shaded per theme via color-mix), depress-to-1px on press, 16px radius, Baloo 2 display face.
+9. [done] Chunky icon/action buttons (3px lip + press), 2px card borders, pill wallet chip, pill streak banner with pulsing flame, press states on vote options.
