@@ -136,3 +136,25 @@ TS verdict: stay on JS for now. Split script.js into modules, add // @ts-check +
 14. [fixed] Vote-change toast, dashed Skip row style, kick button 44px target.
 15. [fixed] joinDenied/welcome reset the joining flag so the Join button never sticks disabled.
 16. [done] Dev mode is now full control: Become spy/citizen (host: real reassign pushed to room via devSpy; guest: local spoof), Set location, Spoof spy UI + Unspoof, +500 coins, Unlock all shop, +3 score, Skip timer to 3s, Force results, System message, Kick by name, End game. Guest spoofs are tagged local-only; host cheats broadcast and are tagged CHEAT.
+
+# round 8 — remaining bugs closed + remaining features (v8)
+
+Bugs:
+1. [fixed] A1 (done) — TURN relay fields in Settings (URL/username/credential, device-local, validated turn:/turns:), applied on next create/join. No hardcoded secrets in the bundle.
+2. [fixed] A3 (graceful) — true host migration is out of reach for a star-topology P2P room (guests hold no mesh to each other), so leaving now closes cleanly: host broadcasts hostLeft, guests keep scores and see "Room Closed — Host Left" instead of a dead screen.
+3. [fixed] B4 (by design, noted) — coins stay cosmetic/local (P2P has no authority to mint); payouts now only reward correct votes, spy escapes, and correct guesses.
+4. [fixed] C8 (partial) — backdrop blur removed under 480px (biggest mobile GPU cost); FA-subset swap logged as future work, unminified dev file kept for direct hosting.
+5. [fixed] C15 (done) — sw.js offline shell (cache-first, versioned spy-v8, old caches purged) registered on http(s) only; _headers can't match ?v= queries on Cloudflare, so immutable-query caching stays Vercel-only by platform limit.
+
+Features:
+6. [done] Generated SVG avatars — seeded faces (bg/skin/eyes/mouth/extras: blush, glasses, headband), zero assets, offline-safe. Shuffle + Classic toggle in the builder, fresh users start with a face, lists/votes/scores/final all render it.
+7. [done] Lobby chat — pre-game talk box in the host lobby on the same relayed channel (history shared with game chat).
+8. [done] Rematch without reload — Back to Lobby resets scores/round/chat for the whole room via toLobby; guests can ask via wantLobby; results End Game button resets correctly per round screen.
+9. [done] Role-reveal flip animation + lobby glow/decor polish (second backdrop glow, logo ring).
+10. [done] Volume slider + voice ducking shipped in round 7; countdown ticks, gift/guess/chat sounds shipped in rounds 6–7. Sound map now complete for v8 scope.
+
+Left as documented future work (needs server or heavy rework, not P2P-client fixes):
+- True host migration / full mesh voice+data (needs SFU or relay server).
+- FA CDN subset (~100KB) — replace with inline SVG icon sprite.
+- Server-minted coins/scores (needs authority backend).
+- _headers ?v= immutable rule (Cloudflare _headers can't match query strings).

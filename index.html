@@ -14,7 +14,7 @@
   <meta property="og:type" content="website">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='112' fill='%237c5cfc'/%3E%3Ctext x='256' y='350' font-size='260' text-anchor='middle' fill='white' font-family='sans-serif' font-weight='bold'%3E%3F%3C/text%3E%3C/svg%3E">
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="styles.css?v=7">
+  <link rel="stylesheet" href="styles.css?v=8">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
@@ -81,6 +81,13 @@
               <span id="lobby-min">Need min. 3 to start</span>
             </div>
             <div id="player-list" class="player-list"></div>
+            <div class="lobby-chat">
+              <div class="chat-messages small" id="lobby-chat-messages" aria-live="polite"></div>
+              <div class="chat-input">
+                <input type="text" id="lobby-chat-input" placeholder="Say hi to the room…" maxlength="180" autocomplete="off" enterkeyhint="send">
+                <button id="lobby-send-btn" aria-label="Send lobby message"><i class="fa-solid fa-paper-plane"></i></button>
+              </div>
+            </div>
             <div class="lobby-picks">
               <div class="pick">
                 <label for="category-select"><i class="fa-solid fa-layer-group"></i> Pack</label>
@@ -229,6 +236,13 @@
           <input type="password" id="dev-pin" inputmode="numeric" maxlength="12" placeholder="Set a PIN to lock dev mode" autocomplete="off">
           <p class="hint" style="text-align:left;margin-top:6px">Long-press the title or triple-click it, then enter this PIN. Default is <strong>2468</strong>.</p>
         </div>
+        <div class="setting-group">
+          <label for="turn-url"><i class="fa-solid fa-tower-broadcast"></i> TURN relay (optional, for strict NATs)</label>
+          <input type="text" id="turn-url" inputmode="url" maxlength="120" placeholder="turn:host:3478" autocomplete="off" spellcheck="false">
+          <input type="text" id="turn-user" maxlength="64" placeholder="username (optional)" autocomplete="off" spellcheck="false">
+          <input type="password" id="turn-pass" maxlength="128" placeholder="credential (optional)" autocomplete="off">
+          <p class="hint" style="text-align:left;margin-top:6px">Saved on this device only. Takes effect on next create/join. Free option: run <strong>coturn</strong> on a small VM.</p>
+        </div>
         <button id="close-settings" class="btn primary"><i class="fa-solid fa-check"></i> Done</button>
       </div>
     </div>
@@ -260,8 +274,12 @@
       <div class="modal-content">
         <button class="modal-x" data-close="avatar-modal" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
         <h2><i class="fa-solid fa-face-smile"></i> Your avatar</h2>
-        <p class="modal-sub">Pick an icon, a color, and an owned frame.</p>
+        <p class="modal-sub">Shuffle a generated face, or build a classic icon below. Frames come from the Shop.</p>
         <div class="avatar-preview" id="avatar-preview"></div>
+        <div class="avatar-gen-row">
+          <button id="avatar-shuffle" class="btn small secondary"><i class="fa-solid fa-dice"></i> Shuffle face</button>
+          <button id="avatar-classic" class="btn small ghost"><i class="fa-solid fa-icons"></i> Classic icons</button>
+        </div>
         <div class="setting-group"><label>Icon</label><div id="avatar-icons" class="pick-grid"></div></div>
         <div class="setting-group"><label>Color</label><div id="avatar-colors" class="pick-grid"></div></div>
         <div class="setting-group"><label>Frame (buy more in Shop)</label><div id="avatar-frames" class="pick-grid"></div></div>
@@ -322,6 +340,6 @@
   </div>
 
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
-  <script src="script.js?v=7"></script>
+  <script src="script.js?v=8"></script>
 </body>
 </html>

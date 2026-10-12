@@ -101,6 +101,41 @@ function safeParseJSON(raw, fallback) {
   } catch (e) { return fallback; }
 }
 
+// Seeded SVG faces — zero assets, offline-safe. Seed picks bg/skin/eyes/mouth/extra.
+const SVG_SKINS = ["#ffd9b3", "#f1c27d", "#e0ac69", "#c68642", "#8d5524", "#ffdbac"];
+function hashSeed(s) {
+  let h = 2166136261;
+  const str = String(s || "?");
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
+}
+function svgFace(seed) {
+  const h = hashSeed(seed);
+  const bg = COLORS[h % COLORS.length];
+  const skin = SVG_SKINS[(h >> 3) % SVG_SKINS.length];
+  const eyes = (h >> 6) % 3, mouth = (h >> 8) % 4, extra = (h >> 10) % 4;
+  const eyeSvg = eyes === 0
+    ? `<circle cx="25" cy="34" r="2.6" fill="#20202a"/><circle cx="39" cy="34" r="2.6" fill="#20202a"/>`
+    : eyes === 1
+    ? `<path d="M22 35q3-3.4 6 0" stroke="#20202a" stroke-width="2.4" fill="none" stroke-linecap="round"/><path d="M36 35q3-3.4 6 0" stroke="#20202a" stroke-width="2.4" fill="none" stroke-linecap="round"/>`
+    : `<circle cx="25" cy="34" r="2.6" fill="#20202a"/><path d="M36 34q3-2.6 6 0" stroke="#20202a" stroke-width="2.4" fill="none" stroke-linecap="round"/>`;
+  const mouthSvg = mouth === 0
+    ? `<path d="M25 44q7 6 14 0" stroke="#20202a" stroke-width="2.6" fill="none" stroke-linecap="round"/>`
+    : mouth === 1
+    ? `<path d="M26 44q8 5 13-1" stroke="#20202a" stroke-width="2.6" fill="none" stroke-linecap="round"/>`
+    : mouth === 2
+    ? `<rect x="25" y="42" width="14" height="6" rx="3" fill="#fff" stroke="#20202a" stroke-width="1.6"/><line x1="29" y1="42" x2="29" y2="48" stroke="#20202a" stroke-width="1.2"/><line x1="35" y1="42" x2="35" y2="48" stroke="#20202a" stroke-width="1.2"/>`
+    : `<line x1="27" y1="45" x2="37" y2="45" stroke="#20202a" stroke-width="2.6" stroke-linecap="round"/>`;
+  const extraSvg = extra === 0 ? ""
+    : extra === 1 ? `<circle cx="20" cy="40" r="3" fill="#ff8fa3" opacity="0.7"/><circle cx="44" cy="40" r="3" fill="#ff8fa3" opacity="0.7"/>`
+    : extra === 2 ? `<g stroke="#20202a" stroke-width="2" fill="none"><circle cx="25" cy="34" r="5.5"/><circle cx="39" cy="34" r="5.5"/><line x1="30.5" y1="34" x2="33.5" y2="34"/></g>`
+    : `<path d="M14 26q18-12 36 0l-2-8q-16-9-32 0z" fill="#20202a"/>`;
+  return `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-hidden="true">`
+    + `<circle cx="32" cy="32" r="32" fill="${bg}"/>`
+    + `<circle cx="32" cy="37" r="20" fill="${skin}"/>${eyeSvg}${mouthSvg}${extraSvg}</svg>`;
+}
+function randomSeed() { return Math.random().toString(36).slice(2, 10); }
+
 class Game {
   constructor() {
     this.peer = null;
@@ -140,6 +175,7 @@ class Game {
     if (!this.owned.includes("frame-none")) this.owned.unshift("frame-none");
     const avatarRaw = safeParseJSON(localStorage.getItem("spy_avatar"), null);
     this.avatar = this.sanitizeAvatar(avatarRaw);
+    if (!avatarRaw && !this.avatar.svgSeed) this.avatar.svgSeed = randomSeed(); // fresh users start with a generated face
     this.streak = this.clampInt(localStorage.getItem("spy_streak"), 0, 0, 999);
     this.bestStreak = this.clampInt(localStorage.getItem("spy_best"), 0, 0, 999);
     this.category = localStorage.getItem("spy_cat") || "classic";
@@ -171,7 +207,8 @@ class Game {
     if (!a || typeof a !== "object") return { ...fallback };
     const icon = typeof a.icon === "string" && /^fa-[a-z0-9-]+$/.test(a.icon) ? a.icon : fallback.icon;
     const frame = typeof a.frame === "string" && /^[a-z0-9-]+$/.test(a.frame) ? a.frame : "frame-none";
-    return { icon, color: this.validColor(a.color), frame };
+    const svgSeed = typeof a.svgSeed === "string" && /^[A-Za-z0-9-]{1,24}$/.test(a.svgSeed) ? a.svgSeed : null;
+    return { icon, color: this.validColor(a.color), frame, svgSeed };
   }
 
   iceConfig() { return buildICE(); }
@@ -267,6 +304,31 @@ class Game {
     return Array.from({ length: 5 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
   }
 
+  // ---------- TURN relay (device-local, applied on next create/join) ----------
+  fillTurnForm() {
+    try {
+      const t = safeParseJSON(localStorage.getItem("spy_turn"), null) || {};
+      this.$("turn-url").value = t.urls || "";
+      this.$("turn-user").value = t.username || "";
+      this.$("turn-pass").value = t.credential || "";
+    } catch (e) {}
+  }
+
+  saveTurnForm() {
+    const urls = this.$("turn-url").value.trim().slice(0, 120);
+    const username = this.$("turn-user").value.trim().slice(0, 64);
+    const credential = this.$("turn-pass").value.slice(0, 128);
+    if (!urls) {
+      try { localStorage.removeItem("spy_turn"); } catch (e) {}
+      this.toast("TURN relay cleared");
+      return;
+    }
+    if (!/^turns?:/.test(urls)) { this.toast("TURN URL must start with turn: or turns:", "error"); return; }
+    try { localStorage.setItem("spy_turn", JSON.stringify({ urls, username, credential })); } catch (e) {}
+    this.$("turn-pass").value = "";
+    this.toast("TURN relay saved — applies on next create/join", "success");
+  }
+
   // ---------- settings / theme ----------
   loadSettings() {
     if (this.myName) this.$("player-name").value = this.myName;
@@ -317,6 +379,8 @@ class Game {
     this.$("quit-btn").onclick = () => this.leaveRoom();
     this.$("send-btn").onclick = () => this.sendChat();
     this.$("chat-input").onkeydown = e => { if (e.key === "Enter") this.sendChat(); };
+    this.$("lobby-send-btn").onclick = () => this.sendLobbyChat();
+    this.$("lobby-chat-input").onkeydown = e => { if (e.key === "Enter") this.sendLobbyChat(); };
 
     this.$("confirm-vote").onclick = () => this.submitVote();
     this.$("confirm-guess").onclick = () => this.submitGuess();
@@ -367,6 +431,10 @@ class Game {
       if (v.length >= 4) { localStorage.setItem("spy_devpin_hash", this.pinHash(v)); try { localStorage.removeItem("spy_devpin"); } catch (e2) {} e.target.value = ""; this.toast("Dev PIN updated", "success"); }
       else if (v) this.toast("PIN needs 4+ characters", "error");
     };
+    this.fillTurnForm();
+    ["turn-url", "turn-user", "turn-pass"].forEach(id => {
+      this.$(id).onchange = () => this.saveTurnForm();
+    });
 
     document.querySelectorAll("[data-close]").forEach(btn => {
       btn.onclick = () => {
@@ -650,6 +718,9 @@ class Game {
   avatarHtml(p, size = 36) {
     const raw = p.avatar || { icon: "fa-user-secret", color: p.color || "#7c5cfc", frame: "frame-none" };
     const a = this.sanitizeAvatar(raw);
+    if (a.svgSeed) {
+      return `<div class="avatar av-svg ${a.frame && a.frame !== "frame-none" ? a.frame : ""}" style="width:${size}px;height:${size}px">${svgFace(a.svgSeed)}</div>`;
+    }
     const initial = this.escapeHtml((p.name || "?")[0].toUpperCase());
     const icon = a.icon && a.icon.startsWith("fa-") ? `<i class="fa-solid ${a.icon}"></i>` : initial;
     return `<div class="avatar ${a.frame && a.frame !== "frame-none" ? a.frame : ""}" style="background:${this.escapeHtml(a.color)};width:${size}px;height:${size}px;font-size:${Math.round(size * 0.42)}px">${icon}</div>`;
@@ -664,12 +735,16 @@ class Game {
   renderAvatarBuilder() {
     const t = this.sanitizeAvatar(this.tmpAvatar);
     this.tmpAvatar = { ...t };
-    this.$("avatar-preview").innerHTML = `<div class="big ${t.frame !== "frame-none" ? t.frame : ""}" style="background:${this.escapeHtml(t.color)}"><i class="fa-solid ${t.icon}"></i></div>`;
+    this.$("avatar-preview").innerHTML = t.svgSeed
+      ? `<div class="big av-svg ${t.frame !== "frame-none" ? t.frame : ""}">${svgFace(t.svgSeed)}</div>`
+      : `<div class="big ${t.frame !== "frame-none" ? t.frame : ""}" style="background:${this.escapeHtml(t.color)}"><i class="fa-solid ${t.icon}"></i></div>`;
+    this.$("avatar-shuffle").onclick = () => { this.tmpAvatar.svgSeed = randomSeed(); this.renderAvatarBuilder(); this.playSound("click"); };
+    this.$("avatar-classic").onclick = () => { this.tmpAvatar.svgSeed = null; this.renderAvatarBuilder(); this.playSound("click"); };
     this.$("avatar-icons").innerHTML = AVATAR_ICONS.map(ic => `<button data-ic="${ic}" class="${t.icon === ic ? "sel" : ""}"><i class="fa-solid ${ic}"></i></button>`).join("");
     this.$("avatar-colors").innerHTML = COLORS.map(c => `<button data-c="${c}" class="swatch ${t.color === c ? "sel" : ""}" style="background:${c}" aria-label="${c}">·</button>`).join("");
     const frames = ["frame-none", ...this.owned.filter(o => o.startsWith("frame-"))];
     this.$("avatar-frames").innerHTML = frames.map(f => `<button data-f="${f}" class="${t.frame === f ? "sel" : ""}" title="${this.escapeHtml(f)}"><i class="fa-solid fa-award"></i></button>`).join("");
-    this.$("avatar-icons").querySelectorAll("button").forEach(b => { b.onclick = () => { this.tmpAvatar.icon = b.dataset.ic; this.renderAvatarBuilder(); }; });
+    this.$("avatar-icons").querySelectorAll("button").forEach(b => { b.onclick = () => { this.tmpAvatar.icon = b.dataset.ic; this.tmpAvatar.svgSeed = null; this.renderAvatarBuilder(); }; });
     this.$("avatar-colors").querySelectorAll("button").forEach(b => { b.onclick = () => { this.tmpAvatar.color = b.dataset.c; this.renderAvatarBuilder(); }; });
     this.$("avatar-frames").querySelectorAll("button").forEach(b => { b.onclick = () => { this.tmpAvatar.frame = b.dataset.f; this.renderAvatarBuilder(); }; });
   }
@@ -1405,6 +1480,19 @@ class Game {
         this.$("display-code").textContent = this.roomCode;
         this.updateStartButton();
         break;
+      case "hostLeft":
+        this.hideVoteModal();
+        this.hideResults();
+        this.phase = "lobby";
+        this.joining = false;
+        this.$("join-btn").disabled = false;
+        this.setStatus("Host left", false);
+        this.playSound("leave");
+        this.toast("Host left — room closed. Scores kept below.", "error");
+        this.showFinalScores({ scores: data.scores || [], title: "Room Closed — Host Left" });
+        this.$("end-game-btn").innerHTML = `<i class="fa-solid fa-rotate-left"></i> New Room`;
+        this.$("end-game-btn").onclick = () => location.reload();
+        break;
       case "kicked":
         this.toast(data.reason || "Removed from the room", "error");
         this.setStatus("Removed", false);
@@ -1556,6 +1644,31 @@ class Game {
       case "endGame":
         this.hideVoteModal();
         this.showFinalScores(data);
+        break;
+      case "toLobby":
+        clearInterval(this.timerInterval);
+        clearTimeout(this.roleTimeout);
+        this.phase = "lobby";
+        this.round = 1;
+        this.votes = {}; this.myVote = null; this.spyGuess = null;
+        this.chatHistory = [];
+        this.waitingForNext = false;
+        if (Array.isArray(data.players)) this.players = data.players;
+        if (data.roomCode) this.roomCode = data.roomCode;
+        this.hideResults();
+        this.hideVoteModal();
+        this.showLobbyScreen();
+        this.renderChat();
+        this.addSystemMessage("Back in the lobby — ready for a new match.");
+        this.playSound("round");
+        this.toast("Back in the lobby", "success");
+        break;
+      case "wantLobby":
+        if (this.isHost) {
+          this.toast(`${data.name || "A guest"} asked to return to lobby`);
+          if (this.phase === "reveal") this.toLobby();
+          else this.addSystemMessage(`${data.name || "A guest"} wants to return to lobby.`);
+        }
         break;
     }
     if (this.devMode) this.updateDevPanel();
@@ -1778,6 +1891,13 @@ class Game {
   }
 
   leaveRoom() {
+    if (this.isHost) {
+      try { this.broadcast({ type: "hostLeft", scores: this.players.map(p => ({ id: p.id, name: p.name, score: p.score || 0 })) }); } catch (e) {}
+      // give the socket a beat to flush before destroy
+      setTimeout(() => { try { if (this.peer) this.peer.destroy(); } catch (e) {} location.reload(); }, 350);
+      try { if (this.localStream) this.localStream.getTracks().forEach(t => t.stop()); } catch (e) {}
+      return;
+    }
     try { if (this.localStream) this.localStream.getTracks().forEach(t => t.stop()); } catch (e) {}
     try { if (this.peer) this.peer.destroy(); } catch (e) {}
     location.reload();
@@ -1848,6 +1968,9 @@ class Game {
 
   showRole() {
     const banner = this.$("role-banner");
+    banner.classList.remove("deal");
+    try { void banner.offsetWidth; } catch (e) {}
+    banner.classList.add("deal");
     const pack = (CATEGORIES[this.category] || CATEGORIES.classic).name;
     const modeName = (MODES[this.mode] || MODES.classic).name;
     if (this.isSpy) {
@@ -2067,6 +2190,9 @@ class Game {
     const hostOnly = this.isHost;
     this.$("next-round-btn").style.display = hostOnly ? "flex" : "none";
     this.$("wait-host").classList.toggle("hidden", hostOnly);
+    const egb = this.$("end-game-btn");
+    egb.innerHTML = `<i class="fa-solid fa-flag-checkered"></i> End Game`;
+    egb.onclick = () => this.endGame();
     // coins + streak: correct voters earn, spies earn on escape/guess
     const me = (data.scores || []).find(s => s.id === this.myId);
     if (me) {
@@ -2184,17 +2310,56 @@ class Game {
     this.showFinalScores({ scores });
   }
 
+  // ---------- rematch without reload: everyone back to the lobby, scores reset ----------
+  toLobby() {
+    if (!this.isHost) return;
+    clearInterval(this.timerInterval);
+    clearTimeout(this.roleTimeout);
+    this.phase = "lobby";
+    this.round = 1;
+    this.votes = {}; this.myVote = null; this.spyGuess = null;
+    this.chatHistory = [];
+    this.players.forEach(p => { p.score = 0; });
+    this.waitingForNext = false;
+    this.broadcast({ type: "toLobby", players: this.players, roomCode: this.roomCode });
+    this.hideResults();
+    this.hideVoteModal();
+    this.showLobbyScreen();
+    this.renderChat();
+    this.addSystemMessage("Back in the lobby — ready for a new match.");
+    this.playSound("round");
+  }
+
+  showLobbyScreen() {
+    this.$("game").classList.remove("active");
+    this.$("lobby").classList.add("active");
+    this.$("join-section").classList.add("hidden");
+    this.$("host-lobby").classList.remove("hidden");
+    this.$("display-code").textContent = this.roomCode || "-----";
+    if (this.isHost) {
+      this.$("start-btn").style.display = "";
+      this.$("guest-wait").classList.add("hidden");
+    } else {
+      this.$("start-btn").style.display = "none";
+      this.$("guest-wait").classList.remove("hidden");
+      this.$("guest-wait").innerHTML = `<i class="fa-solid fa-hourglass-half"></i> Waiting for the host to start…`;
+    }
+    this.renderPlayers();
+  }
+
   showFinalScores(data) {
     this.hideResults();
     this.hideVoteModal();
     this.phase = "reveal";
     const content = this.$("results-content");
-    this.$("results-title").textContent = "Final Scores";
+    this.$("results-title").textContent = data.title || "Final Scores";
     this.$("results-icon").innerHTML = `<i class="fa-solid fa-trophy"></i>`;
     this.$("results-icon").style.background = "var(--warning)";
     content.innerHTML = (data.scores || []).map((s, i) => `
       <div class="score-row ${i === 0 ? "winner" : ""}">
-        <span class="avatar" style="background:${this.escapeHtml(s.color || "#7c5cfc")}">${s.avatar && s.avatar.icon ? `<i class="fa-solid ${s.avatar.icon}"></i>` : this.escapeHtml((s.name || "?")[0].toUpperCase())}</span>
+        ${s.avatar && s.avatar.svgSeed
+          ? `<span class="avatar av-svg" style="width:30px;height:30px">${svgFace(s.avatar.svgSeed)}</span>`
+          : `<span class="avatar" style="background:${this.escapeHtml(s.color || "#7c5cfc")}">${s.avatar && s.avatar.icon ? `<i class="fa-solid ${s.avatar.icon}"></i>` : this.escapeHtml((s.name || "?")[0].toUpperCase())}</span>`}
         <span>${i === 0 ? '<i class="fa-solid fa-trophy" style="color:var(--warning)"></i> ' : `#${i + 1} `}${this.escapeHtml(s.name)}</span>
         <span class="pts">${s.score} pts</span>
       </div>`).join("");
@@ -2202,7 +2367,13 @@ class Game {
     this.$("wait-host").classList.add("hidden");
     const endBtn = this.$("end-game-btn");
     endBtn.innerHTML = `<i class="fa-solid fa-rotate-left"></i> Back to Lobby`;
-    endBtn.onclick = () => location.reload();
+    endBtn.onclick = () => {
+      if (this.isHost) this.toLobby();
+      else {
+        this.sendToHost({ type: "wantLobby", id: this.myId, name: this.myName });
+        this.toast("Asked the host to return to lobby");
+      }
+    };
     this.$("results").classList.remove("hidden");
     this.$("results").querySelector(".results-card").classList.add("win");
     this.launchConfetti(90);
@@ -2253,7 +2424,35 @@ class Game {
     this.updateTimer();
   }
 
-  // ---------- chat (dedup + host relay) ----------
+  // ---------- chat (dedup + host relay; lobby box mirrors the same history) ----------
+  sendLobbyChat() {
+    const input = this.$("lobby-chat-input");
+    const msg = input.value.trim().slice(0, 180);
+    if (!msg) return;
+    if (!this.myId && !this.isHost) return this.toast("Not connected yet", "error");
+    input.value = "";
+    const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const msgId = `${this.myId || "host"}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const payload = { type: "chat", id: this.myId, name: this.myName, message: msg, time, msgId };
+    this.seenMsgIds.add(msgId);
+    this.addChatMessage(this.myName, msg, true, time, false);
+    if (this.isHost) this.broadcast(payload);
+    else this.sendToHost(payload);
+    this.playSound("click");
+  }
+
+  renderLobbyChat() {
+    const box = this.$("lobby-chat-messages");
+    if (!box) return;
+    box.innerHTML = this.chatHistory.slice(-30).map(m => {
+      if (m.sys) return `<div class="chat-msg sys"><i class="fa-solid fa-circle-info"></i> ${this.escapeHtml(m.message)}</div>`;
+      return `<div class="chat-msg ${m.isOwn ? "own" : "other"}">
+        <div class="sender">${this.escapeHtml(m.name)}</div>
+        ${this.escapeHtml(m.message)}
+      </div>`;
+    }).join("");
+    box.scrollTop = box.scrollHeight;
+  }
   sendChat(text) {
     const input = this.$("chat-input");
     const msg = (typeof text === "string" ? text : input.value).trim().slice(0, 180);
@@ -2293,6 +2492,7 @@ class Game {
       </div>`;
     }).join("");
     if (nearBottom) container.scrollTop = container.scrollHeight;
+    this.renderLobbyChat();
   }
 
   clearChat() {
@@ -2301,4 +2501,12 @@ class Game {
   }
 }
 
-window.addEventListener("load", () => { window.game = new Game(); });
+window.addEventListener("load", () => {
+  window.game = new Game();
+  // offline shell (same-origin only — inert on file:// or blocked contexts)
+  try {
+    if ("serviceWorker" in navigator && /^https?:$/.test(location.protocol)) {
+      navigator.serviceWorker.register("sw.js").catch(() => {});
+    }
+  } catch (e) {}
+});
