@@ -124,6 +124,7 @@ class Game {
     this.chatHistory = [];
     this.seenMsgIds = new Set();
     this.soundEnabled = localStorage.getItem("spy_sound") !== "false";
+    this.volume = this.clampInt(localStorage.getItem("spy_vol"), 70, 0, 100) / 100;
     this.discussTime = this.clampInt(localStorage.getItem("spy_discuss"), 120, 30, 300);
     this.voteTime = this.clampInt(localStorage.getItem("spy_vote"), 45, 15, 120);
     this.devMode = false;
@@ -204,9 +205,10 @@ class Game {
       if (!this.audioCtx) {
         this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         this.masterGain = this.audioCtx.createGain();
-        this.masterGain.gain.value = 0.5;
         this.masterGain.connect(this.audioCtx.destination);
       }
+      // voice ducks SFX so calls stay clear
+      this.masterGain.gain.value = 0.8 * this.volume * (this.voiceOn ? 0.5 : 1);
       if (this.audioCtx.state === "suspended") this.audioCtx.resume();
       return true;
     } catch (e) { return false; }
@@ -270,10 +272,15 @@ class Game {
     if (this.myName) this.$("player-name").value = this.myName;
     const lastCode = localStorage.getItem("spy_lastcode");
     if (lastCode) this.$("room-code").value = lastCode;
-    // invite links carry the code as #ABCDE — prefill so friends never mistype it
+    // invite links carry the code as #ABCDE or ?room=ABCDE — prefill so friends never mistype it
     try {
       const h = (location.hash || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 5);
       if (h.length === 5) this.$("room-code").value = h;
+      else {
+        const q = new URLSearchParams(location.search).get("room") || "";
+        const c = q.replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 5);
+        if (c.length === 5) this.$("room-code").value = c;
+      }
     } catch (e) {}
     this.$("sound-toggle").checked = this.soundEnabled;
     this.$("discuss-time").value = this.discussTime;
@@ -339,6 +346,12 @@ class Game {
       localStorage.setItem("spy_sound", String(this.soundEnabled));
       this.syncSoundBtn();
     };
+    this.$("vol-range").value = Math.round(this.volume * 100);
+    this.$("vol-range").oninput = e => {
+      this.volume = this.clampInt(e.target.value, 70, 0, 100) / 100;
+      localStorage.setItem("spy_vol", String(Math.round(this.volume * 100)));
+      this.ensureAudio();
+    };
     this.$("discuss-time").onchange = e => {
       this.discussTime = this.clampInt(e.target.value, 120, 30, 300);
       e.target.value = this.discussTime;
@@ -351,7 +364,7 @@ class Game {
     };
     this.$("dev-pin").onchange = e => {
       const v = e.target.value.trim();
-      if (v.length >= 4) { localStorage.setItem("spy_devpin", v); e.target.value = ""; this.toast("Dev PIN updated", "success"); }
+      if (v.length >= 4) { localStorage.setItem("spy_devpin_hash", this.pinHash(v)); try { localStorage.removeItem("spy_devpin"); } catch (e2) {} e.target.value = ""; this.toast("Dev PIN updated", "success"); }
       else if (v) this.toast("PIN needs 4+ characters", "error");
     };
 
@@ -411,14 +424,36 @@ class Game {
     this.$("dev-clear-chat").onclick = () => { this.clearChat(); this.devLog("Chat cleared."); };
     this.$("dev-copy-state").onclick = () => this.devCopyState();
     this.$("dev-log-state").onclick = () => { const s = this.getDebugState(); console.log("[spy-debug]", s); this.devLog(JSON.stringify(s, null, 1)); };
+    this.$("dev-become-spy").onclick = () => this.devBecomeSpy();
+    this.$("dev-become-citizen").onclick = () => this.devBecomeCitizen();
+    this.$("dev-set-location").onclick = () => this.devSetLocation();
+    this.$("dev-spoof-spy").onclick = () => this.devSpoofSpy();
+    this.$("dev-unspoof").onclick = () => this.devUnspoof();
+    this.$("dev-add-coins").onclick = () => this.devAddCoins();
+    this.$("dev-unlock-all").onclick = () => this.devUnlockAll();
+    this.$("dev-bump-score").onclick = () => this.devBumpScore();
+    this.$("dev-skip-timer").onclick = () => this.devSkipTimer();
+    this.$("dev-force-results").onclick = () => this.devForceResults();
+    this.$("dev-send-system").onclick = () => this.devSendSystem();
+    this.$("dev-kick").onclick = () => this.devKick();
+    this.$("dev-end-game").onclick = () => this.endGame();
 
     // unlock audio on first touch (autoplay policy best practice)
-    window.addEventListener("pointerdown", () => { this.ensureAudio(); }, { passive: true });
+    window.addEventListener("pointerdown", () => {
+      this.ensureAudio();
+      try {
+        document.querySelectorAll("#voice-audio audio").forEach(a => {
+          if (a.paused) { const p = a.play && a.play(); if (p && p.catch) p.catch(() => {}); }
+        });
+      } catch (e) {}
+    }, { passive: true });
     // mobile backgrounding drops sockets — heal on return
     document.addEventListener("visibilitychange", () => {
       if (document.hidden !== false || !this.peer || !this.roomCode) return;
       if (this.isHost) {
         if (this.peer.disconnected) { try { this.peer.reconnect(); } catch (e) {} }
+        // backgrounded tabs throttle setTimeout — heal role phase by timestamp
+        if (this.phase === "role" && this.roleEndsAt && Date.now() >= this.roleEndsAt) this.startDiscussion();
       } else {
         const host = this.connections.get("host");
         if (!host || !host.open) {
@@ -442,10 +477,11 @@ class Game {
     });
     this.buildLobbyPicks();
     ["theme-select", "category-select", "mode-select", "gift-to"].forEach(id => this.enhanceSelect(this.$(id)));
-    // tap outside any custom dropdown closes it
+    // tap outside any custom dropdown closes it (scroll too — fixed lists don't follow)
     document.addEventListener("pointerdown", e => {
       if (!e.target || !e.target.closest || !e.target.closest(".dd")) this.closeAllDropdowns();
     });
+    document.addEventListener("scroll", () => this.closeAllDropdowns(), { passive: true, capture: true });
     this.updateWallet();
     this.renderStreak();
   }
@@ -531,6 +567,24 @@ class Game {
         list.appendChild(li);
       });
       wrap.appendChild(list);
+      // Inside a scrollable modal the absolute list gets clipped — pin it
+      // to the viewport under the button instead.
+      if (wrap.closest(".modal-content")) {
+        const r = btn.getBoundingClientRect();
+        list.classList.add("fixed");
+        list.style.left = `${Math.max(8, r.left)}px`;
+        list.style.width = `${r.width}px`;
+        const maxH = 220;
+        const below = innerHeight - r.bottom - 8;
+        if (below < maxH && r.top > below) {
+          list.style.top = "auto";
+          list.style.bottom = `${Math.max(8, innerHeight - r.top + 6)}px`;
+          list.style.maxHeight = `${Math.min(maxH, r.top - 16)}px`;
+        } else {
+          list.style.top = `${r.bottom + 6}px`;
+          list.style.maxHeight = `${Math.min(maxH, Math.max(120, below))}px`;
+        }
+      }
       wrap.classList.add("open");
       btn.setAttribute("aria-expanded", "true");
     });
@@ -697,6 +751,7 @@ class Game {
     }
     this.voiceOn = true;
     this.syncVoiceBtn();
+    this.ensureAudio();
     this.toast("Voice live — talk to the room", "success");
     this.playSound("join");
     // drop old calls (e.g. listen-only ones answered before we had a mic)
@@ -749,7 +804,16 @@ class Game {
     }
     el.srcObject = stream;
     el.muted = false;
-    try { const p = el.play && el.play(); if (p && p.catch) p.catch(() => {}); } catch (e) {}
+    try {
+      const p = el.play && el.play();
+      if (p && p.catch) p.catch(() => {
+        // iOS/Safari blocks autoplay until a gesture — next tap resumes.
+        if (!this._voiceToastShown) {
+          this._voiceToastShown = true;
+          this.toast("Tap anywhere to hear voice");
+        }
+      });
+    } catch (e) {}
   }
 
   detachVoice(pid) { const el = document.getElementById(`voice-${pid}`); if (el) el.remove(); }
@@ -818,16 +882,41 @@ class Game {
     tick();
   }
 
-  // ---------- dev mode (PIN-locked) ----------
-  devPin() { return localStorage.getItem("spy_devpin") || DEFAULT_DEV_PIN; }
+  // ---------- dev mode (PIN-locked, hashed, URL stripped) ----------
+  pinHash(pin) {
+    let h = 5381;
+    const s = `spy|${pin}`;
+    for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+    return `h${h.toString(36)}`;
+  }
+
+  devPinOk(pin) {
+    // migrate legacy plaintext once, then forget it
+    try {
+      const legacy = localStorage.getItem("spy_devpin");
+      if (legacy) {
+        localStorage.setItem("spy_devpin_hash", this.pinHash(legacy));
+        localStorage.removeItem("spy_devpin");
+      }
+    } catch (e) {}
+    const want = localStorage.getItem("spy_devpin_hash") || this.pinHash(DEFAULT_DEV_PIN);
+    return this.pinHash(pin) === want;
+  }
 
   checkDevMode() {
     // No silent auto-enable: ?dev=PIN unlocks only when the PIN matches.
     const q = new URLSearchParams(location.search);
     const pin = q.get("dev") || q.get("debug");
-    if (pin && pin === this.devPin()) {
+    if (pin && this.devPinOk(pin)) {
       sessionStorage.setItem("spy_dev_auth", "1");
       this.enableDev(true);
+    }
+    if (pin) {
+      try {
+        q.delete("dev"); q.delete("debug");
+        const qs = q.toString();
+        history.replaceState(null, "", location.pathname + (qs ? `?${qs}` : "") + location.hash);
+      } catch (e) {}
     }
   }
 
@@ -845,7 +934,7 @@ class Game {
 
   submitDevPin() {
     const v = this.$("dev-pin-input").value.trim();
-    if (v && v === this.devPin()) {
+    if (v && this.devPinOk(v)) {
       sessionStorage.setItem("spy_dev_auth", "1");
       this.$("dev-lock-modal").classList.add("hidden");
       this.enableDev();
@@ -932,7 +1021,7 @@ class Game {
     } else if (this.isSpy) {
       this.devLog("You ARE the spy. Location hidden from you by design.");
     } else {
-      this.devLog("Only the host can reveal. (Anti-cheat: guests never receive spy/location.)");
+      this.devLog("Guests never receive spy/location (anti-cheat). Use Become spy (local spoof) or Spoof spy UI to test spy flows.");
     }
   }
 
@@ -958,6 +1047,156 @@ class Game {
     const s = JSON.stringify(this.getDebugState(), null, 2);
     this.copyText(s, "Debug state copied");
     this.devLog("State copied to clipboard.");
+  }
+
+  // ---------- dev cheats (PIN-locked; host cheats are real, guest cheats are local spoofs) ----------
+  devCheatTag() { return this.isHost ? "CHEAT" : "CHEAT (local only)"; }
+
+  devBroadcastSpy(note) {
+    // host pushes new spy/location truth to the room (conscious cheat — everyone sees effects)
+    this.broadcast({ type: "devSpy", spyIds: this.spyIds, location: this.location, round: this.round });
+    this.devLog(`${note} [${this.devCheatTag()}] spy=${this.spyIds.join(",")} loc=${this.location}`);
+  }
+
+  devBecomeSpy() {
+    if (this.phase === "lobby") return this.devLog("Start the game first.");
+    if (this.isHost) {
+      if (this.spyIds.includes(this.myId)) return this.devLog("You are already a spy.");
+      const want = Math.max(1, this.spyIds.length);
+      this.spyIds = [this.myId, ...this.spyIds.filter(id => id !== this.myId)].slice(0, want);
+      this.spyId = this.spyIds[0];
+      this.isSpy = true;
+      this.showRole(); this.updatePhaseUI(); this.renderPlayers();
+      this.playSound("reveal");
+      this.toast("CHEAT: you are now the spy", "success");
+      this.devBroadcastSpy("Become spy.");
+    } else {
+      this.devSpoofSpy("local cheat — host truth unchanged, votes/scores still use the real spy");
+    }
+  }
+
+  devBecomeCitizen() {
+    if (this.phase === "lobby") return this.devLog("Start the game first.");
+    if (this.isHost) {
+      if (!this.spyIds.includes(this.myId)) return this.devLog("You are already a citizen.");
+      const repl = this.realPlayers().map(p => p.id).find(id => id !== this.myId && !this.spyIds.includes(id));
+      if (!repl) return this.devLog("Nobody to pass the spy role to.");
+      this.spyIds = this.spyIds.map(id => id === this.myId ? repl : id);
+      this.spyId = this.spyIds[0];
+      this.isSpy = false;
+      this.showRole(); this.updatePhaseUI(); this.renderPlayers();
+      this.toast("CHEAT: you are now a citizen", "success");
+      this.devBroadcastSpy("Become citizen.");
+    } else {
+      if (!this.location) return this.devLog("You never learned the location — nothing to restore locally.");
+      this.isSpy = false;
+      this.showRole(); this.updatePhaseUI();
+      this.toast("CHEAT (local only): citizen view", "success");
+      this.devLog("Spoofed citizen view locally.");
+    }
+  }
+
+  devSetLocation() {
+    const v = (prompt("Set location (host: real for everyone, guest: local view only)", this.location || "") || "").trim().slice(0, 40);
+    if (!v) return;
+    this.location = v;
+    if (this.isHost) {
+      this.showRole(); this.renderPlayers();
+      this.devBroadcastSpy("Set location.");
+      this.toast(`CHEAT: location is now ${v}`, "success");
+    } else {
+      if (this.isSpy) return this.devLog("Spies can't see the location — spoof a citizen view is impossible without it.");
+      this.showRole();
+      this.toast("CHEAT (local only): location view set", "success");
+      this.devLog(`Local location view set to ${v}.`);
+    }
+  }
+
+  devSpoofSpy(note) {
+    if (this.phase === "lobby") return this.devLog("Start the game first.");
+    if (this._spoofPrev === undefined) this._spoofPrev = this.isSpy;
+    this.isSpy = true;
+    this.showRole(); this.updatePhaseUI();
+    this.playSound("guess-open");
+    this.toast("CHEAT (local only): spy view", "success");
+    this.devLog(note || "Spoofed spy view locally — host truth unchanged. Guess submits still need a real spy role on host.");
+  }
+
+  devUnspoof() {
+    if (this._spoofPrev === undefined) return this.devLog("No spoof active.");
+    if (!this.isHost) {
+      this.devLog("Guest truth lives on host — re-sync will restore your real view next heartbeat. Local flag cleared.");
+    } else {
+      this.isSpy = this.spyIds.includes(this.myId);
+      this.showRole(); this.updatePhaseUI(); this.renderPlayers();
+    }
+    this._spoofPrev = undefined;
+    this.toast("Spoof cleared");
+  }
+
+  devAddCoins() {
+    this.earnCoins(500);
+    this.toast("CHEAT: +500 coins (local)", "success");
+    this.devLog("+500 coins locally.");
+  }
+
+  devUnlockAll() {
+    SHOP_ITEMS.forEach(it => { if (!this.owned.includes(it.id)) this.owned.push(it.id); });
+    localStorage.setItem("spy_owned", JSON.stringify(this.owned));
+    this.playSound("success");
+    this.toast("CHEAT: all shop items unlocked (local)", "success");
+    this.devLog(`Owned: ${this.owned.join(",")}`);
+  }
+
+  devBumpScore() {
+    const me = this.players.find(p => p.id === this.myId);
+    if (!me) return this.devLog("Not in a room.");
+    me.score = (me.score || 0) + 3;
+    if (this.isHost) this.broadcast({ type: "players", players: this.players, category: this.category, mode: this.mode });
+    this.renderPlayers();
+    this.toast(`CHEAT: +3 score${this.isHost ? "" : " (local, host overwrites on next tally)"}`, "success");
+    this.devLog("+3 score.");
+  }
+
+  devSkipTimer() {
+    if (!this.isHost) return this.devLog("Skip-timer needs host. Timer truth lives on host.");
+    if (this.phase !== "discuss" && this.phase !== "vote") return this.devLog("No timer running.");
+    this.timeLeft = Math.min(this.timeLeft, 3);
+    this.endsAt = Date.now() + this.timeLeft * 1000;
+    this.broadcast({ type: "timer", time: this.timeLeft, endsAt: this.endsAt });
+    this.updateTimer();
+    this.devLog("Timer skipped to 3s.");
+  }
+
+  devForceResults() {
+    if (!this.isHost) return this.devLog("Force-results needs host.");
+    if (this.phase === "vote") { this.endVoting(); this.devLog("Forced results now."); }
+    else if (this.phase === "discuss" || this.phase === "role") { this.startVoting(); this.devLog("Jumped to vote."); }
+    else this.devLog("Start the game first.");
+  }
+
+  devSendSystem() {
+    const v = (prompt("System message to show in chat", "") || "").trim().slice(0, 180);
+    if (!v) return;
+    if (this.isHost) {
+      const msgId = `host-${Date.now()}-devsys`;
+      this.seenMsgIds.add(msgId);
+      this.addSystemMessage(v);
+      this.broadcast({ type: "chat", id: "system", name: "System", message: v, time: "", msgId });
+    } else {
+      this.addSystemMessage(`${v} (local only)`);
+    }
+    this.devLog("System message sent.");
+  }
+
+  devKick() {
+    if (!this.isHost) return this.devLog("Kick needs host.");
+    const v = (prompt(`Kick who? (${this.players.map(p => p.name).join(", ") || "nobody"})`, "") || "").trim().toLowerCase();
+    if (!v) return;
+    const target = this.players.find(p => p.name.toLowerCase() === v || p.id.toLowerCase() === v);
+    if (!target) return this.devLog("No match.");
+    this.kickPlayer(target.id);
+    this.devLog(`Kicked ${target.name}.`);
   }
 
   getDebugState() {
@@ -1025,6 +1264,16 @@ class Game {
     const code = this.$("room-code").value.trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 5);
     if (!name) return this.toast("Enter your name first", "error");
     if (code.length !== 5) return this.toast("Room code is 5 letters", "error");
+    // Tapping Join while a join is in flight cancels it.
+    if (this.joining) {
+      this.joinAttempt = (this.joinAttempt || 0) + 1000;
+      this.joining = false;
+      this.$("join-btn").disabled = false;
+      this.setStatus("Offline", false);
+      this.toast("Join cancelled");
+      return;
+    }
+    this.joining = true;
     this.myName = name;
     localStorage.setItem("spy_name", name);
     localStorage.setItem("spy_lastcode", code);
@@ -1037,9 +1286,11 @@ class Game {
     const retry = (msg) => {
       if (this.joinAttempt !== attempt) return; // superseded by newer attempt
       if (attempt < MAX_ATTEMPTS) {
+        this.joining = false; // next attempt re-arms; a user tap now starts fresh instead of cancelling
         this.toast(`${msg} — retrying (${attempt + 1}/${MAX_ATTEMPTS})…`);
         setTimeout(() => { if (this.joinAttempt === attempt) this.joinRoom(attempt + 1); }, BACKOFF[attempt + 1] || 2000);
       } else {
+        this.joining = false;
         this.$("join-btn").disabled = false;
         this.setStatus("Failed", false);
         this.toast("Could not reach the room. Check the code, host tab open, same PeerJS cloud, or symmetric NAT (needs TURN relay).", "error");
@@ -1061,6 +1312,7 @@ class Game {
         clearTimeout(failTimer);
         if (err && err.type === "peer-unavailable") retry("Room not found yet");
         else {
+          this.joining = false;
           this.$("join-btn").disabled = false;
           this.setStatus("Failed", false);
           this.toast("Join failed. Check connection — carrier NAT may need a TURN relay (see bugs.md A1).", "error");
@@ -1079,8 +1331,8 @@ class Game {
       this.connections.delete("host");
       let conn;
       try { conn = this.peer.connect(this.peerIdFor(code), { reliable: true }); } catch (e) { conn = null; }
-      if (!conn) { clearTimeout(failTimer); this.$("join-btn").disabled = false; return this.toast("Could not connect", "error"); }
-      this.handleConnection(conn, () => { done = true; clearTimeout(failTimer); this.$("join-btn").disabled = false; });
+      if (!conn) { clearTimeout(failTimer); this.joining = false; this.$("join-btn").disabled = false; return this.toast("Could not connect", "error"); }
+      this.handleConnection(conn, () => { done = true; clearTimeout(failTimer); this.joining = false; this.$("join-btn").disabled = false; });
     };
 
     if (peer.open) doConnect();
@@ -1101,7 +1353,7 @@ class Game {
       } else {
         this.connections.set("host", conn);
         conn.send({ type: "join", id: this.myId, name: this.myName, avatar: this.avatar });
-        this.setStatus("Connected", true);
+        this.setStatus(`Connected · ${this.roomCode}`, true);
       }
       if (onOpen) onOpen();
       if (this.devMode) this.updateDevPanel();
@@ -1125,7 +1377,14 @@ class Game {
         if (this.phase !== "lobby") { try { conn.send({ type: "joinDenied", reason: "Game already started" }); } catch (e) {} break; }
         if (this.players.find(p => p.id === data.id)) break; // retry with reused peer, already added
         const color = COLORS[this.players.length % COLORS.length];
-        this.addPlayer({ id: data.id, name: String(data.name || "Player").slice(0, 16), isHost: false, score: 0, color, avatar: this.sanitizeAvatar(data.avatar) });
+        let pname = String(data.name || "Player").slice(0, 16);
+        // duplicate names make voting ambiguous — suffix them
+        if (this.players.some(p => p.name.toLowerCase() === pname.toLowerCase())) {
+          let i = 2;
+          while (this.players.some(p => p.name.toLowerCase() === `${pname} ${i}`.toLowerCase())) i++;
+          pname = `${pname} ${i}`.slice(0, 16);
+        }
+        this.addPlayer({ id: data.id, name: pname, isHost: false, score: 0, color, avatar: this.sanitizeAvatar(data.avatar) });
         this.sendTo(conn, { type: "welcome", players: this.players, roomCode: this.roomCode, chat: this.chatHistory.slice(-40), category: this.category, mode: this.mode });
         this.broadcast({ type: "players", players: this.players, category: this.category, mode: this.mode });
         this.playSound("join");
@@ -1136,12 +1395,28 @@ class Game {
       case "joinDenied":
         this.toast(data.reason || "Could not join", "error");
         this.setStatus("Denied", false);
-        // rejoining mid-game lands here with a dead game screen — reset to lobby
-        if (this.phase !== "lobby") setTimeout(() => location.reload(), 1500);
+        // Mid-game join: no reload. Stay in lobby, flag waits for next round.
+        this.waitingForNext = true;
+        this.$("join-btn").disabled = false;
+        this.showHostLobby();
+        this.$("start-btn").style.display = "none";
+        this.$("guest-wait").classList.remove("hidden");
+        this.$("guest-wait").innerHTML = `<i class="fa-solid fa-hourglass-half"></i> Game in progress — you join next round.`;
+        this.$("display-code").textContent = this.roomCode;
+        this.updateStartButton();
+        break;
+      case "kicked":
+        this.toast(data.reason || "Removed from the room", "error");
+        this.setStatus("Removed", false);
+        this.playSound("leave");
+        try { if (this.peer) this.peer.destroy(); } catch (e) {}
+        setTimeout(() => location.reload(), 1500);
         break;
       case "welcome":
         this.players = Array.isArray(data.players) ? data.players : [];
         this.roomCode = data.roomCode || this.roomCode;
+        this.waitingForNext = false;
+        this.joining = false;
         if (data.category) { this.category = data.category; this.setSelect(this.$("category-select"), data.category); }
         if (data.mode) { this.mode = data.mode; this.setSelect(this.$("mode-select"), data.mode); }
         this.chatHistory = Array.isArray(data.chat) ? data.chat : [];
@@ -1153,7 +1428,7 @@ class Game {
           this.$("guest-wait").classList.remove("hidden");
           this.$("display-code").textContent = this.roomCode;
         }
-        this.setStatus("In room", true);
+        this.setStatus(`In room · ${this.roomCode}`, true);
         this.toast("Joined room!", "success");
         if (this.voiceOn) this.callAllPeers();
         break;
@@ -1174,6 +1449,7 @@ class Game {
         this.spyId = null; // guests never learn it
         this.round = data.round || 1;
         this.phase = "role";
+        this.waitingForNext = false;
         this.votes = {}; this.myVote = null; this.spyGuess = null;
         this.chatHistory = [];
         if (Array.isArray(data.players)) this.players = data.players;
@@ -1191,7 +1467,11 @@ class Game {
         break;
       case "phase":
         this.phase = data.phase;
-        if (typeof data.time === "number") { this.timeLeft = data.time; this.updateTimer(); }
+        if (typeof data.endsAt === "number" && data.endsAt > 0) {
+          this.endsAt = data.endsAt;
+          this.timeLeft = Math.max(0, Math.ceil((data.endsAt - Date.now()) / 1000));
+          this.updateTimer();
+        } else if (typeof data.time === "number") { this.timeLeft = data.time; this.updateTimer(); }
         this.updatePhaseUI();
         if (data.phase === "vote") { this.myVote = null; this.openVoteModal(); }
         if (data.phase === "spyguess" && this.isSpy) this.openGuessModal();
@@ -1199,7 +1479,12 @@ class Game {
         if (data.phase === "vote") this.addSystemMessage("Voting time! Pick who you think the spy is.");
         break;
       case "timer":
-        this.timeLeft = data.time;
+        if (typeof data.endsAt === "number" && data.endsAt > 0) {
+          this.endsAt = data.endsAt;
+          this.timeLeft = Math.max(0, Math.ceil((data.endsAt - Date.now()) / 1000));
+        } else {
+          this.timeLeft = data.time;
+        }
         this.updateTimer();
         break;
       case "voteCount":
@@ -1216,8 +1501,20 @@ class Game {
         this.applyScores(data.scores);
         this.showResults(data);
         break;
-      case "nextRound":
-        this.isSpy = !!data.isSpy;
+      case "devSpy": {
+        // host cheat push: new spy/location truth. Guests apply what the host sent.
+        if (this.isHost) break;
+        this._spoofPrev = undefined;
+        this.spyIds = Array.isArray(data.spyIds) ? data.spyIds : [];
+        this.isSpy = this.spyIds.includes(this.myId);
+        if (!this.isSpy && typeof data.location === "string") this.location = data.location;
+        if (typeof data.round === "number" && data.round > 0) this.round = data.round;
+        this.showRole(); this.updatePhaseUI(); this.renderPlayers();
+        this.playSound("reveal");
+        this.toast(this.isSpy ? "Host made YOU the spy (dev cheat)" : "Host changed roles (dev cheat)");
+        break;
+      }
+      case "nextRound":        this.isSpy = !!data.isSpy;
         this.spyIds = data.spyIds || [];
         if (data.category && CATEGORIES[data.category]) { this.category = data.category; this.setSelect(this.$("category-select"), data.category); }
         if (data.mode && MODES[data.mode]) { this.mode = data.mode; this.setSelect(this.$("mode-select"), data.mode); }
@@ -1225,6 +1522,7 @@ class Game {
         this.spyId = null;
         this.round = data.round;
         this.phase = "role";
+        this.waitingForNext = false;
         this.votes = {}; this.myVote = null; this.spyGuess = null;
         if (Array.isArray(data.players)) this.players = data.players;
         this.hideResults();
@@ -1279,8 +1577,11 @@ class Game {
       // if everyone voted already (minus leaver), close the vote
       if (this.phase === "vote") this.maybeCloseVoting();
     } else {
-      this.setStatus("Disconnected", false);
-      this.toast("Lost connection to host", "error");
+      this.setStatus("Disconnected — tap Join Room to retry", false);
+      this.joining = false;
+      this.$("join-btn").disabled = false;
+      this.$("join-btn").innerHTML = `<i class="fa-solid fa-rotate-right"></i> Reconnect`;
+      this.toast("Lost connection to host — tap Reconnect", "error");
     }
     if (this.devMode) this.updateDevPanel();
   }
@@ -1306,6 +1607,7 @@ class Game {
       type: "sync",
       phase: this.phase,
       time: this.timeLeft,
+      endsAt: this.endsAt || 0,
       round: this.round,
       category: this.category,
       mode: this.mode,
@@ -1339,10 +1641,18 @@ class Game {
     if (data.phase && data.phase !== this.phase && data.phase !== "lobby") {
       const prev = this.phase;
       this.phase = data.phase;
-      if (typeof data.time === "number") { this.timeLeft = data.time; this.updateTimer(); }
+      if (typeof data.endsAt === "number" && data.endsAt > 0) {
+        this.endsAt = data.endsAt;
+        this.timeLeft = Math.max(0, Math.ceil((data.endsAt - Date.now()) / 1000));
+        this.updateTimer();
+      } else if (typeof data.time === "number") { this.timeLeft = data.time; this.updateTimer(); }
       this.updatePhaseUI();
       this.renderPlayers();
       if (data.phase === "vote" && prev !== "vote") { this.myVote = null; this.openVoteModal(); }
+    } else if (typeof data.endsAt === "number" && data.endsAt > 0 && this.phase !== "lobby") {
+      this.endsAt = data.endsAt;
+      this.timeLeft = Math.max(0, Math.ceil((data.endsAt - Date.now()) / 1000));
+      this.updateTimer();
     } else if (typeof data.time === "number" && this.phase !== "lobby") {
       this.timeLeft = data.time;
       this.updateTimer();
@@ -1370,6 +1680,10 @@ class Game {
     const btn = this.$("start-btn");
     const n = this.players.length;
     this.$("lobby-count").innerHTML = `<i class="fa-solid fa-users"></i> ${n} player${n === 1 ? "" : "s"}`;
+    if (this.waitingForNext && !this.isHost) {
+      this.$("lobby-min").textContent = "Game in progress — you join next round";
+      return;
+    }
     this.$("lobby-min").textContent = n < MIN_PLAYERS ? `Need ${MIN_PLAYERS - n} more to start` : "Ready to start!";
     if (this.isHost) {
       btn.disabled = n < MIN_PLAYERS;
@@ -1392,8 +1706,10 @@ class Game {
           <div class="ptag">${p.isHost ? '<i class="fa-solid fa-crown crown"></i> host · ' : ""}${p.id === this.myId ? "you" : "player"}</div></div>
           <span class="pscore">${p.score || 0} pts</span>
           ${p.id !== this.myId && !p.bot ? `<button class="gift-btn" data-gift="${this.escapeHtml(p.id)}" title="Send coins"><i class="fa-solid fa-gift"></i></button>` : ""}
+          ${this.isHost && p.id !== this.myId ? `<button class="kick-btn" data-kick="${this.escapeHtml(p.id)}" title="Remove ${this.escapeHtml(p.name)}"><i class="fa-solid fa-user-xmark"></i></button>` : ""}
         </div>`).join("");
       list.querySelectorAll("[data-gift]").forEach(b => { b.onclick = () => this.openGift(); });
+      list.querySelectorAll("[data-kick]").forEach(b => { b.onclick = () => this.kickPlayer(b.dataset.kick); });
     }
     const panel = this.$("players-panel");
     if (panel) {
@@ -1405,6 +1721,25 @@ class Game {
         </div>`).join("");
     }
     this.updateStartButton();
+  }
+
+  kickPlayer(pid) {
+    if (!this.isHost) return;
+    const target = this.players.find(p => p.id === pid);
+    if (!target || pid === this.myId) return;
+    const conn = this.connections.get(pid);
+    if (conn) { try { conn.send({ type: "kicked", reason: "Host removed you from the room" }); } catch (e) {} }
+    setTimeout(() => { try { conn && conn.close(); } catch (e) {} }, 400);
+    this.connections.delete(pid);
+    this.voiceCalls.delete(pid);
+    this.detachVoice(pid);
+    this.players = this.players.filter(p => p.id !== pid);
+    delete this.votes[pid];
+    this.broadcast({ type: "players", players: this.players });
+    this.renderPlayers();
+    this.setStatus(`Hosting · ${this.roomCode} · ${this.players.length}`, true);
+    this.addSystemMessage(`${target.name} was removed by the host.`);
+        if (this.phase === "vote") this.maybeCloseVoting();
   }
 
   copyText(text, okMsg) {
@@ -1499,6 +1834,7 @@ class Game {
     this.updatePhaseUI();
     this.renderPlayers();
     this.playSound("round");
+    this.roleEndsAt = Date.now() + 3500;
     clearTimeout(this.roleTimeout);
     this.roleTimeout = setTimeout(() => this.startDiscussion(), 3500);
   }
@@ -1533,9 +1869,10 @@ class Game {
   startDiscussion() {
     if (!this.isHost || (this.phase !== "role" && this.phase !== "lobby")) return;
     this.phase = "discuss";
-    this.broadcast({ type: "phase", phase: "discuss" });
-    this.updatePhaseUI();
     const secs = (MODES[this.mode] && MODES[this.mode].discuss) || this.discussTime;
+    this.endsAt = Date.now() + secs * 1000;
+    this.broadcast({ type: "phase", phase: "discuss", endsAt: this.endsAt });
+    this.updatePhaseUI();
     this.startTimer(secs, () => this.startVoting());
     this.addSystemMessage("Discussion started! Ask questions to find the spy.");
   }
@@ -1546,7 +1883,8 @@ class Game {
     this.phase = "vote";
     this.votes = {};
     this.myVote = null;
-    this.broadcast({ type: "phase", phase: "vote" });
+    this.endsAt = Date.now() + this.voteTime * 1000;
+    this.broadcast({ type: "phase", phase: "vote", endsAt: this.endsAt });
     this.updatePhaseUI();
     this.broadcastVoteCount();
     this.startTimer(this.voteTime, () => this.endVoting());
@@ -1563,7 +1901,11 @@ class Game {
       <div class="vote-option" data-id="${this.escapeHtml(p.id)}">
         ${this.avatarHtml(p, 30)}
         <span>${this.escapeHtml(p.name)}${p.bot ? " (bot)" : ""}</span>
-      </div>`).join("");
+      </div>`).join("") + `
+      <div class="vote-option skip" data-id="__skip">
+        <i class="fa-solid fa-forward" style="color:var(--text-muted)"></i>
+        <span>Skip — no vote</span>
+      </div>`;
     this.myVote = null;
     this.$("confirm-vote").disabled = true;
     options.querySelectorAll(".vote-option").forEach(el => {
@@ -1582,11 +1924,12 @@ class Game {
   submitVote() {
     if (!this.myVote) return;
     this.hideVoteModal();
+    const skipped = this.myVote === "__skip";
     const payload = { type: "vote", id: this.myId, vote: this.myVote };
     if (this.isHost) this.recordVote(payload);
     else this.sendToHost(payload);
     this.playSound("vote");
-    this.toast("Vote locked in", "success");
+    this.toast(skipped ? "Vote skipped" : "Vote locked in — tap Vote to change", "success");
   }
 
   recordVote(data) {
@@ -1594,8 +1937,11 @@ class Game {
     if (!data || !data.id || !data.vote) return;
     if (data.id === data.vote) return;
     const voter = this.players.find(p => p.id === data.id);
-    const target = this.players.find(p => p.id === data.vote);
-    if (!voter || voter.bot || !target || target.bot) return;
+    if (!voter || voter.bot) return;
+    if (data.vote !== "__skip") {
+      const target = this.players.find(p => p.id === data.vote);
+      if (!target || target.bot) return;
+    }
     this.votes[data.id] = data.vote;
     this.broadcastVoteCount();
     this.maybeCloseVoting();
@@ -1630,7 +1976,11 @@ class Game {
     this.phase = "reveal";
 
     const tally = {};
-    Object.values(this.votes).forEach(v => { if (v) tally[v] = (tally[v] || 0) + 1; });
+    Object.values(this.votes).forEach(v => {
+      if (!v || v === "__skip") return;
+      if (!this.players.find(p => p.id === v)) return;
+      tally[v] = (tally[v] || 0) + 1;
+    });
     const maxVotes = Math.max(0, ...Object.values(tally));
     const eliminated = maxVotes > 0 ? Object.keys(tally).filter(id => tally[id] === maxVotes) : [];
     // One rule for all modes: caught only if someone was voted out and all of them are spies.
@@ -1717,10 +2067,14 @@ class Game {
     const hostOnly = this.isHost;
     this.$("next-round-btn").style.display = hostOnly ? "flex" : "none";
     this.$("wait-host").classList.toggle("hidden", hostOnly);
-    // coins + streak: winners earn, streak tracks citizen wins
+    // coins + streak: correct voters earn, spies earn on escape/guess
     const me = (data.scores || []).find(s => s.id === this.myId);
     if (me) {
-      const myGain = data.spyCaught ? (!this.isSpy ? 1 : 0) : (data.guessCorrect && this.isSpy ? 3 : (this.isSpy ? 2 : 0));
+      const myVoteHit = this.myVote && this.myVote !== "__skip" && (data.spyIds || []).includes(this.myVote);
+      let myGain = 0;
+      if (data.spyCaught) myGain = (!this.isSpy && myVoteHit) ? 1 : 0;
+      else if (data.guessCorrect && this.isSpy) myGain = 3;
+      else if (!data.spyCaught && !data.guessCorrect && this.isSpy) myGain = 2;
       if (myGain > 0) this.earnCoins(myGain * 10 + (won ? 10 : 0));
     }
     if (data.spyCaught) {
@@ -1818,6 +2172,7 @@ class Game {
     this.showRole();
     this.updatePhaseUI();
     this.renderPlayers();
+    this.roleEndsAt = Date.now() + 3500;
     clearTimeout(this.roleTimeout);
     this.roleTimeout = setTimeout(() => this.startDiscussion(), 3500);
   }
@@ -1856,16 +2211,17 @@ class Game {
 
   hideResults() { this.$("results").classList.add("hidden"); }
 
-  // ---------- timer ----------
+  // ---------- timer (host drives, guests render from endsAt timestamp) ----------
   startTimer(seconds, onEnd) {
     if (!this.isHost) return;
     clearInterval(this.timerInterval);
     this.timeLeft = seconds;
+    this.endsAt = Date.now() + seconds * 1000;
     this.updateTimer();
     this.timerInterval = setInterval(() => {
       this.timeLeft--;
       this.updateTimer();
-      this.broadcast({ type: "timer", time: this.timeLeft });
+      this.broadcast({ type: "timer", time: this.timeLeft, endsAt: this.endsAt });
       if (this.timeLeft <= 5 && this.timeLeft > 0) this.playSound("tick");
       if (this.timeLeft <= 0) {
         clearInterval(this.timerInterval);

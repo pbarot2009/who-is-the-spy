@@ -117,3 +117,22 @@ TS verdict: stay on JS for now. Split script.js into modules, add // @ts-check +
 13. [fixed] C7 — confetti cancels prior RAF loop, handles resize, scales for DPR.
 14. [fixed] C14 (partial) — ticks at 5-4-3-2-1 + go blip; new chat-pop / leave / gift-send / gift-receive / guess-right / guess-wrong synth sounds; softer error tone.
 15. [fixed] A11/C10/C12/C13 — guests send voice-state once (host broadcasts once); server adds Vary + HEAD; avatar color hex-validated; status shows CODE + count; gift-btn 44px; lobby picks stack on narrow phones.
+
+# round 7 fixes (16 shipped, v7)
+
+1. [fixed] A4/A5 — join denied mid-game no longer reloads. Guest stays in lobby with "Game in progress — you join next round" and auto-merges on gameStart/nextRound.
+2. [fixed] A7 — role phase driven by roleEndsAt timestamp; host heals past-due role on tab return.
+3. [fixed] A10 — timer uses endsAt timestamps (phase/timer/sync all carry it); guests render remaining from it, drops no longer jump the clock.
+4. [fixed] Join is cancellable — tapping Join mid-flight cancels retries; internal retries no longer self-cancel.
+5. [fixed] B6 — votes can be changed (reopen modal, resubmit) plus a Skip option; tally ignores skips.
+6. [fixed] B4 — only citizens who actually voted a spy earn coins; wrong votes / skips pay nothing.
+7. [fixed] C3 — dropdown lists inside modals pin fixed under the button (open upward when needed) and close on scroll.
+8. [fixed] C11 — blocked voice autoplay toasts "Tap anywhere to hear voice"; any tap resumes remote audio.
+9. [fixed] Dev PIN stored hashed (legacy plaintext migrated once), ?dev stripped from the URL after use.
+10. [fixed] Duplicate names get a " 2"/" 3" suffix on join so votes stay unambiguous.
+11. [fixed] Host kick — lobby rows show a remove button (host only); kicked guest gets a reason message.
+12. [fixed] Guest disconnect shows "Disconnected — tap Join Room to retry" with a Reconnect-labeled button; ?room= links work besides #CODE.
+13. [done] PWA manifest (standalone, portrait, SVG icon) + volume slider in Settings with voice ducking (SFX halve while mic is live).
+14. [fixed] Vote-change toast, dashed Skip row style, kick button 44px target.
+15. [fixed] joinDenied/welcome reset the joining flag so the Join button never sticks disabled.
+16. [done] Dev mode is now full control: Become spy/citizen (host: real reassign pushed to room via devSpy; guest: local spoof), Set location, Spoof spy UI + Unspoof, +500 coins, Unlock all shop, +3 score, Skip timer to 3s, Force results, System message, Kick by name, End game. Guest spoofs are tagged local-only; host cheats broadcast and are tagged CHEAT.

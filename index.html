@@ -13,7 +13,8 @@
   <meta property="og:description" content="Find the spy before they find the location. Free browser party game for 3–8 players.">
   <meta property="og:type" content="website">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='112' fill='%237c5cfc'/%3E%3Ctext x='256' y='350' font-size='260' text-anchor='middle' fill='white' font-family='sans-serif' font-weight='bold'%3E%3F%3C/text%3E%3C/svg%3E">
-  <link rel="stylesheet" href="styles.css?v=6">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="styles.css?v=7">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
@@ -211,6 +212,10 @@
           <label for="sound-toggle"><i class="fa-solid fa-volume-high"></i> Sound effects</label>
           <input type="checkbox" id="sound-toggle" checked>
         </div>
+        <div class="setting-group row">
+          <label for="vol-range"><i class="fa-solid fa-sliders"></i> Volume</label>
+          <input type="range" id="vol-range" min="0" max="100" step="5" value="70">
+        </div>
         <div class="setting-group">
           <label for="discuss-time"><i class="fa-solid fa-comments"></i> Discussion time (seconds)</label>
           <input type="number" id="discuss-time" min="30" max="300" step="15" value="120">
@@ -293,6 +298,19 @@
           <button id="dev-clear-chat"><i class="fa-solid fa-trash"></i> Clear chat</button>
           <button id="dev-copy-state"><i class="fa-solid fa-copy"></i> Copy state</button>
           <button id="dev-log-state"><i class="fa-solid fa-terminal"></i> Log state</button>
+          <button id="dev-become-spy"><i class="fa-solid fa-user-secret"></i> Become spy</button>
+          <button id="dev-become-citizen"><i class="fa-solid fa-user-shield"></i> Become citizen</button>
+          <button id="dev-set-location"><i class="fa-solid fa-location-dot"></i> Set location</button>
+          <button id="dev-spoof-spy"><i class="fa-solid fa-mask"></i> Spoof spy UI</button>
+          <button id="dev-unspoof"><i class="fa-solid fa-rotate-left"></i> Unspoof</button>
+          <button id="dev-add-coins"><i class="fa-solid fa-coins"></i> +500 coins</button>
+          <button id="dev-unlock-all"><i class="fa-solid fa-unlock"></i> Unlock all</button>
+          <button id="dev-bump-score"><i class="fa-solid fa-plus"></i> +3 score</button>
+          <button id="dev-skip-timer"><i class="fa-solid fa-forward-fast"></i> Skip timer</button>
+          <button id="dev-force-results"><i class="fa-solid fa-square-poll-vertical"></i> Force results</button>
+          <button id="dev-send-system"><i class="fa-solid fa-bullhorn"></i> System msg</button>
+          <button id="dev-kick"><i class="fa-solid fa-user-xmark"></i> Kick</button>
+          <button id="dev-end-game"><i class="fa-solid fa-flag-checkered"></i> End game</button>
         </div>
         <pre id="dev-log" class="dev-log" aria-live="polite"></pre>
       </div>
@@ -304,6 +322,6 @@
   </div>
 
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
-  <script src="script.js?v=6"></script>
+  <script src="script.js?v=7"></script>
 </body>
 </html>

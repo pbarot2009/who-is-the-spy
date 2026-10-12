@@ -530,6 +530,9 @@ details.how-card[open] summary::after { transform: rotate(180deg); }
 .setting-group label i { color: var(--primary); margin-right: 5px; }
 .setting-group.row { display: flex; align-items: center; justify-content: space-between; }
 .setting-group input[type="checkbox"] { width: 26px; height: 26px; accent-color: var(--primary); margin: 0; }
+.setting-group input[type="range"] { width: 150px; accent-color: var(--primary); margin: 0; padding: 0; }
+.kick-btn { margin-left: 4px; background: none; border: none; color: var(--danger); cursor: pointer; font-size: 0.85rem; padding: 8px; min-width: 44px; min-height: 44px; }
+.vote-option.skip { border-style: dashed; color: var(--text-muted); }
 
 /* ---------- Dev panel (themed — no hardcoded dark colors) ---------- */
 .dev-panel {
@@ -670,6 +673,7 @@ select.native-hidden { display: none !important; }
   max-height: 220px; overflow-y: auto;
   animation: ddIn 0.16s ease;
 }
+.dd-list.fixed { position: fixed; top: auto; z-index: 210; }
 @keyframes ddIn { from { opacity: 0; transform: translateY(-6px); } }
 .dd-opt {
   display: flex; align-items: center; gap: 9px;
