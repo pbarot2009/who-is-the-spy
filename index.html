@@ -14,7 +14,7 @@
   <meta property="og:type" content="website">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='112' fill='%237c5cfc'/%3E%3Ctext x='256' y='350' font-size='260' text-anchor='middle' fill='white' font-family='sans-serif' font-weight='bold'%3E%3F%3C/text%3E%3C/svg%3E">
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="styles.css?v=10">
+  <link rel="stylesheet" href="styles.css?v=11">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&family=Sora:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
@@ -31,9 +31,10 @@
         <div id="connection-status" class="status offline" role="status" aria-live="polite">
           <span class="dot"></span><span id="status-text">Offline</span>
         </div>
-        <button id="wallet-pill" class="wallet-pill" title="Coins and shop">
+        <button id="wallet-pill" class="wallet-pill hud-chip gold" title="Coins and shop">
           <i class="fa-solid fa-coins"></i> <span id="coin-balance">100</span>
         </button>
+        <span id="streak-chip" class="hud-chip streak hidden" title="Win streak"><i class="fa-solid fa-fire"></i> <span id="streak-count">0</span></span>
       </div>
       <div class="top-right">
         <button id="avatar-btn" class="icon-btn" title="Avatar" aria-label="Edit avatar">
@@ -49,13 +50,45 @@
     <div id="lobby" class="screen active">
       <div class="container">
         <div class="hero">
-          <div class="logo-mark" aria-hidden="true"><i class="fa-solid fa-user-secret"></i></div>
+          <div class="mascot" aria-hidden="true">
+            <svg viewBox="0 0 200 176">
+              <ellipse cx="100" cy="162" rx="52" ry="10" fill="#000" opacity="0.18"/>
+              <rect x="72" y="104" width="56" height="48" rx="18" style="fill:var(--primary)"/>
+              <rect x="72" y="104" width="56" height="14" rx="7" fill="#000" opacity="0.15"/>
+              <circle cx="74" cy="122" r="9" style="fill:var(--primary)"/>
+              <circle cx="126" cy="122" r="9" style="fill:var(--primary)"/>
+              <circle cx="126" cy="122" r="17" fill="none" stroke="#8a6d3b" stroke-width="6"/>
+              <line x1="138" y1="134" x2="152" y2="148" stroke="#8a6d3b" stroke-width="8" stroke-linecap="round"/>
+              <ellipse cx="82" cy="158" rx="12" ry="7" fill="#2b2b3a"/>
+              <ellipse cx="118" cy="158" rx="12" ry="7" fill="#2b2b3a"/>
+              <circle cx="100" cy="72" r="38" fill="#ffd9b3"/>
+              <circle cx="86" cy="80" r="4" fill="#ff8fa3" opacity="0.7"/>
+              <circle cx="114" cy="80" r="4" fill="#ff8fa3" opacity="0.7"/>
+              <g fill="#2b2b3a">
+                <rect x="66" y="58" width="28" height="20" rx="9"/>
+                <rect x="106" y="58" width="28" height="20" rx="9"/>
+                <rect x="92" y="64" width="16" height="6"/>
+              </g>
+              <path d="M88 96q12 9 24 0" stroke="#2b2b3a" stroke-width="4" fill="none" stroke-linecap="round"/>
+              <ellipse cx="100" cy="34" rx="56" ry="10" fill="#2b2b3a"/>
+              <path d="M68 34q0-26 32-26t32 26z" fill="#2b2b3a"/>
+              <rect x="68" y="24" width="64" height="9" fill="#e11d48"/>
+              <text x="152" y="52" font-size="26" font-weight="800" style="fill:var(--warning)" font-family="sans-serif">?</text>
+              <text x="34" y="66" font-size="20" font-weight="800" style="fill:var(--primary)" font-family="sans-serif">?</text>
+            </svg>
+          </div>
           <h1 id="game-title" title="Long-press, triple-click, or Alt+D for dev mode">Who is the <span class="accent">Spy?</span></h1>
           <p class="subtitle">3–8 players · no signup · runs in your browser</p>
+          <div class="hero-badges">
+            <span class="pill-badge"><i class="fa-solid fa-users"></i> 3–8 friends</span>
+            <span class="pill-badge"><i class="fa-solid fa-bolt"></i> No signup</span>
+            <span class="pill-badge"><i class="fa-solid fa-gift"></i> Free</span>
+          </div>
         </div>
 
         <div class="card menu-card">
           <div id="join-section">
+            <h2 class="menu-title">Start a party</h2>
             <label class="field-label" for="player-name"><i class="fa-solid fa-user"></i> Your name</label>
             <input type="text" id="player-name" placeholder="e.g. Alex" maxlength="16" autocomplete="nickname" enterkeyhint="next">
             <label class="field-label" for="room-code"><i class="fa-solid fa-key"></i> Room code</label>
@@ -126,6 +159,16 @@
         <div class="timer" id="timer" title="Time left"><i class="fa-solid fa-stopwatch"></i> <span id="timer-text">2:00</span></div>
         <div class="round" id="round-label"><i class="fa-solid fa-rotate"></i> R1</div>
       </header>
+
+      <div class="quest" aria-hidden="true">
+        <div class="quest-track"><div class="quest-fill" id="quest-fill"></div></div>
+        <div class="quest-nodes" id="quest-nodes">
+          <span class="qnode" data-ph="role"><i class="fa-solid fa-eye"></i></span>
+          <span class="qnode" data-ph="discuss"><i class="fa-solid fa-comments"></i></span>
+          <span class="qnode" data-ph="vote"><i class="fa-solid fa-check-to-slot"></i></span>
+          <span class="qnode" data-ph="reveal"><i class="fa-solid fa-flag"></i></span>
+        </div>
+      </div>
 
       <div class="role-banner" id="role-banner">
         <div class="role-title" id="role-title"><i class="fa-solid fa-user-shield"></i> You are a Citizen</div>
@@ -344,6 +387,6 @@
   </div>
 
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
-  <script src="script.js?v=10"></script>
+  <script src="script.js?v=11"></script>
 </body>
 </html>

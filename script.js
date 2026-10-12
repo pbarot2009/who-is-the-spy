@@ -1107,6 +1107,12 @@ class Game {
     const line = this.$("streak-line");
     if (this.streak >= 2) { line.classList.remove("hidden"); this.$("streak-text").textContent = `${this.streak}-round win streak! Best: ${this.bestStreak}`; }
     else line.classList.add("hidden");
+    const chip = this.$("streak-chip");
+    if (chip) {
+      chip.classList.toggle("hidden", this.streak < 2);
+      this.$("streak-count").textContent = this.streak;
+      chip.title = `${this.streak}-round win streak (best ${this.bestStreak})`;
+    }
   }
 
   // ---------- voice chat (PeerJS media calls, mesh of audio-only) ----------
@@ -2469,13 +2475,17 @@ class Game {
     }
     html += `<div style="margin-top:12px;font-weight:700">Scores</div>`;
     const sorted = [...(data.scores || [])].sort((a, b) => b.score - a.score);
+    const top = Math.max(1, ...sorted.map(s => s.score || 0));
     html += sorted.map((s, i) => {
       const pl = this.players.find(x => x.id === s.id);
       const av = pl ? this.avatarHtml(pl, 30) : `<span class="avatar" style="background:${this.escapeHtml(s.color || "#7c5cfc")}">${this.escapeHtml((s.name || "?")[0].toUpperCase())}</span>`;
+      const pct = Math.max(4, Math.round(((s.score || 0) / top) * 100));
       return `
       <div class="score-row ${i === 0 ? "winner" : ""}">
         ${av}
-        <span>${i === 0 ? '<i class="fa-solid fa-trophy" style="color:var(--warning)"></i> ' : ""}${this.escapeHtml(s.name)}</span>
+        <span class="sname">${i === 0 ? '<i class="fa-solid fa-trophy" style="color:var(--warning)"></i> ' : ""}${this.escapeHtml(s.name)}
+          <span class="xp-track"><span class="xp-fill" style="width:${pct}%"></span></span>
+        </span>
         <span class="pts">${s.score} pts</span>
       </div>`;
     }).join("");
@@ -2660,10 +2670,13 @@ class Game {
     this.$("results-title").textContent = data.title || "Final Scores";
     this.$("results-icon").innerHTML = `<i class="fa-solid fa-trophy"></i>`;
     this.$("results-icon").style.background = "var(--warning)";
+    const finalTop = Math.max(1, ...(data.scores || []).map(s => s.score || 0));
     content.innerHTML = (data.scores || []).map((s, i) => `
       <div class="score-row ${i === 0 ? "winner" : ""}">
         ${this.avatarHtml({ avatar: s.avatar, name: s.name }, 30)}
-        <span>${i === 0 ? '<i class="fa-solid fa-trophy" style="color:var(--warning)"></i> ' : `#${i + 1} `}${this.escapeHtml(s.name)}</span>
+        <span class="sname">${i === 0 ? '<i class="fa-solid fa-trophy" style="color:var(--warning)"></i> ' : `#${i + 1} `}${this.escapeHtml(s.name)}
+          <span class="xp-track"><span class="xp-fill" style="width:${Math.max(4, Math.round(((s.score || 0) / finalTop) * 100))}%"></span></span>
+        </span>
         <span class="pts">${s.score} pts</span>
       </div>`).join("");
     this.$("next-round-btn").style.display = "none";
@@ -2724,6 +2737,15 @@ class Game {
     const [icon, label] = labels[this.phase] || ["fa-gamepad", this.phase];
     this.$("phase-label").innerHTML = `<i class="fa-solid ${icon}"></i> <span id="phase-text">${this.escapeHtml(label)}</span>`;
     this.$("round-label").innerHTML = `<i class="fa-solid fa-rotate"></i> R${this.round}`;
+    const order = ["role", "discuss", "vote", "reveal"];
+    const idx = order.indexOf(this.phase === "spyguess" ? "vote" : this.phase);
+    const fill = this.$("quest-fill");
+    if (fill) fill.style.width = idx < 0 ? "0%" : `${(idx / (order.length - 1)) * 100}%`;
+    document.querySelectorAll("#quest-nodes .qnode").forEach(n => {
+      const ni = order.indexOf(n.dataset.ph);
+      n.classList.toggle("done", idx >= 0 && ni < idx);
+      n.classList.toggle("now", idx >= 0 && ni === idx);
+    });
     this.updateTimer();
   }
 

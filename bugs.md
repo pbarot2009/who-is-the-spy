@@ -182,3 +182,15 @@ Duolingo reference (chunky lip system, pill badges, rounded display type):
 2. [fixed] Reaching the list end chain-scrolled the modal behind (which re-closed the list) — `.dd-list` now uses `overscroll-behavior: contain` + touch scrolling.
 3. [fixed] Resize/orientation detached fixed lists — they close instead of floating.
 4. [fixed] Stale open state when a modal closed over a dropdown, and fixed lists floating above newly opened modals — modal open/close/backdrop all reset dropdowns (Esc already did).
+
+# round 10 — full Duolingo UI conversion (v11)
+
+Reference: Duolingo web/mobile system (16px CTA radius, 4px hard lip, pill badges, 2–3px borders, rounded display type, lesson progress bar, XP rows). Applied per-theme via color-mix lips so all 5 themes stay valid.
+1. [done] HUD top bar — gold coin pill + orange streak-flame pill (both with lips), status chip kept.
+2. [done] Lobby hero — flat SVG spy mascot (fedora, shades, magnifier, theme-tinted) with idle bob, big Baloo 2 headline, pill badge row (3–8 friends / no signup / free).
+3. [done] Menu card — "Start a party" title, chunky 2px inputs with lip + focus lip, chunky dropdown buttons to match.
+4. [done] How-to — colored duo lesson nodes (green/blue/orange/success) with lips instead of flat tiles.
+5. [done] Quest progress bar — Role → Discuss → Vote → Results pill track with animated fill + done/current node states, driven by updatePhaseUI (spyguess maps to vote).
+6. [done] Game screen — 2px role banner with lip, pill player chips with lips, 18px chat bubbles with chunky borders.
+7. [done] Results as leaderboard — XP bars per score row relative to top score, winner row gold-lipped, bigger trophy icon, chunkier modal titles/close buttons/toasts/score rows/room card/player rows.
+8. [checked] Full audit — node --check on all 3 JS files, every JS-referenced id exists in HTML (only dynamic voice-${pid} aside), every new class styled, braces balanced, dead logo-mark CSS removed.
