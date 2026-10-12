@@ -175,3 +175,10 @@ Music (zero assets, lookahead scheduler per Web Audio best practice):
 Duolingo reference (chunky lip system, pill badges, rounded display type):
 8. [done] 3D lip buttons — 4px hard bottom lip on primary/secondary/ghost (auto-shaded per theme via color-mix), depress-to-1px on press, 16px radius, Baloo 2 display face.
 9. [done] Chunky icon/action buttons (3px lip + press), 2px card borders, pill wallet chip, pill streak banner with pulsing flame, press states on vote options.
+
+# round 9 hotfix — dropdown scroll (v10)
+
+1. [fixed] Scrolling inside a dropdown closed it — the capture-phase scroll closer fired for list scrolls too. It now ignores scrolls from inside `.dd` and fast-paths when nothing is open.
+2. [fixed] Reaching the list end chain-scrolled the modal behind (which re-closed the list) — `.dd-list` now uses `overscroll-behavior: contain` + touch scrolling.
+3. [fixed] Resize/orientation detached fixed lists — they close instead of floating.
+4. [fixed] Stale open state when a modal closed over a dropdown, and fixed lists floating above newly opened modals — modal open/close/backdrop all reset dropdowns (Esc already did).

@@ -700,6 +700,9 @@ select.native-hidden { display: none !important; }
   background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-sm);
   box-shadow: var(--shadow); padding: 6px; margin: 0; list-style: none;
   max-height: 220px; overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
   animation: ddIn 0.16s ease;
 }
 .dd-list.fixed { position: fixed; top: auto; z-index: 210; }

@@ -600,7 +600,7 @@ class Game {
     if (meta) meta.content = getComputedStyle(document.body).getPropertyValue("--bg").trim() || "#0f0f13";
   }
 
-  openSettings() { this.$("settings-modal").classList.remove("hidden"); }
+  openSettings() { this.closeAllDropdowns(); this.$("settings-modal").classList.remove("hidden"); }
   closeSettings() { this.$("settings-modal").classList.add("hidden"); }
 
   // ---------- UI wiring ----------
@@ -682,12 +682,13 @@ class Game {
 
     document.querySelectorAll("[data-close]").forEach(btn => {
       btn.onclick = () => {
+        this.closeAllDropdowns();
         this.$(btn.dataset.close).classList.add("hidden");
         if (btn.dataset.close === "vote-modal" && this.phase === "vote") this.toast("Vote closed — tap Vote to reopen");
       };
     });
     document.querySelectorAll(".modal, .overlay").forEach(m => {
-      m.addEventListener("click", e => { if (e.target === m && m.id !== "results") m.classList.add("hidden"); });
+      m.addEventListener("click", e => { if (e.target === m && m.id !== "results") { this.closeAllDropdowns(); m.classList.add("hidden"); } });
     });
     document.addEventListener("keydown", e => {
       if (e.key === "Escape") {
@@ -800,11 +801,20 @@ class Game {
     document.addEventListener("visibilitychange", () => {
       if (document.hidden === true) this.stopMusic(true);
     });
-    // tap outside any custom dropdown closes it (scroll too — fixed lists don't follow)
+    // tap outside any custom dropdown closes it
     document.addEventListener("pointerdown", e => {
       if (!e.target || !e.target.closest || !e.target.closest(".dd")) this.closeAllDropdowns();
     });
-    document.addEventListener("scroll", () => this.closeAllDropdowns(), { passive: true, capture: true });
+    // scrolling the page behind a fixed list would detach it — close then,
+    // but never for scrolls inside the dropdown itself (list scroll must work)
+    document.addEventListener("scroll", e => {
+      if (!document.querySelector(".dd.open")) return;
+      if (e.target && e.target.closest && e.target.closest(".dd")) return;
+      this.closeAllDropdowns();
+    }, { passive: true, capture: true });
+    // a resize/orientation move also detaches fixed lists
+    window.addEventListener("resize", () => this.closeAllDropdowns());
+    window.addEventListener("orientationchange", () => this.closeAllDropdowns());
     this.updateWallet();
     this.renderStreak();
   }
@@ -942,6 +952,7 @@ class Game {
   }
 
   openShop() {
+    this.closeAllDropdowns();
     this.updateWallet();
     const grid = this.$("shop-items");
     grid.innerHTML = SHOP_ITEMS.map(it => {
@@ -985,6 +996,7 @@ class Game {
   }
 
   openAvatar() {
+    this.closeAllDropdowns();
     this.tmpAvatar = { ...this.avatar };
     this.renderAvatarBuilder();
     this.$("avatar-modal").classList.remove("hidden");
@@ -1052,6 +1064,7 @@ class Game {
   }
 
   openGift() {
+    this.closeAllDropdowns();
     const others = this.players.filter(p => p.id !== this.myId && !p.bot);
     const gt = this.$("gift-to");
     gt.innerHTML = others.map(p => `<option value="${this.escapeHtml(p.id)}">${this.escapeHtml(p.name)}</option>`).join("") || `<option value="">No one to gift</option>`;
@@ -2303,6 +2316,7 @@ class Game {
   }
 
   openVoteModal() {
+    this.closeAllDropdowns();
     const modal = this.$("vote-modal");
     const options = this.$("vote-options");
     const others = this.players.filter(p => p.id !== this.myId && !p.bot);
@@ -2506,6 +2520,7 @@ class Game {
   }
 
   openGuessModal() {
+    this.closeAllDropdowns();
     const modal = this.$("guess-modal");
     const options = this.$("guess-options");
     this.spyGuess = null;
