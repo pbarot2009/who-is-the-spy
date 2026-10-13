@@ -70,6 +70,72 @@ const COLORS = ["#7c5cfc", "#ef4444", "#22c55e", "#f59e0b", "#0ea5e9", "#ec4899"
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 const PEER_PREFIX = "whos-spy-v1-";
 const MIN_PLAYERS = 3;
+function safeParseJSON(raw, fallback) {
+  try {
+    if (!raw) return fallback;
+    const v = JSON.parse(raw);
+    return v === undefined ? fallback : v;
+  } catch (e) { return fallback; }
+}
+
+// Device storage with schema keys. Private-mode / quota throws never break boot.
+// Sync wrapper over localStorage with in-memory fallback so reads/writes
+// keep working when storage is blocked, and data lasts across reloads.
+// NOTE: this block must stay above buildICE()/Game — both read store at load.
+const store = {
+  _mem: Object.create(null),
+  _lsOk: null,
+  lsOk() {
+    if (this._lsOk !== null) return this._lsOk;
+    try {
+      const k = "__spy_probe__";
+      window.localStorage.setItem(k, "1");
+      window.localStorage.removeItem(k);
+      this._lsOk = true;
+    } catch (e) { this._lsOk = false; }
+    return this._lsOk;
+  },
+  get(k, f) {
+    try {
+      const v = window.localStorage.getItem(k);
+      if (v != null) return v;
+    } catch (e) { /* blocked storage — fall through to memory */ }
+    try {
+      if (Object.prototype.hasOwnProperty.call(this._mem, k)) return this._mem[k];
+    } catch (e) {}
+    return f;
+  },
+  set(k, v) {
+    const s = String(v);
+    try { this._mem[k] = s; } catch (e) {}
+    try { window.localStorage.setItem(k, s); } catch (e) { /* quota/private-mode: memory copy still holds */ }
+  },
+  del(k) {
+    try { delete this._mem[k]; } catch (e) {}
+    try { window.localStorage.removeItem(k); } catch (e) {}
+  },
+  getJSON(k, fallback) {
+    return safeParseJSON(this.get(k, undefined), fallback);
+  },
+  setJSON(k, obj) {
+    try { this.set(k, JSON.stringify(obj)); } catch (e) {}
+  }
+};
+// Session-scoped flag (dev auth). Same throw-safe pattern — raw
+// sessionStorage throws in private mode / blocked cookies.
+const sess = {
+  get(k) {
+    try { return window.sessionStorage.getItem(k); }
+    catch (e) { return null; }
+  },
+  set(k, v) {
+    try { window.sessionStorage.setItem(k, String(v)); } catch (e) {}
+  },
+  del(k) {
+    try { window.sessionStorage.removeItem(k); } catch (e) {}
+  }
+};
+
 const BASE_STUN = [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
@@ -92,21 +158,6 @@ function buildICE() {
   return { iceServers: servers };
 }
 const ICE = buildICE();
-
-function safeParseJSON(raw, fallback) {
-  try {
-    if (!raw) return fallback;
-    const v = JSON.parse(raw);
-    return v === undefined ? fallback : v;
-  } catch (e) { return fallback; }
-}
-
-// Device storage with schema keys. Private-mode / quota throws never break boot.
-const store = {
-  get(k, f) { try { const v = store.get(k); return v == null ? f : v; } catch (e) { return f; } },
-  set(k, v) { try { store.set(k, v); } catch (e) {} },
-  del(k) { try { store.del(k); } catch (e) {} }
-};
 const AVATAR_KEY = "spy_avatar_v2"; // {v:2, skin,bg,eyes,brows,mouth,hair,extra,frame}
 const AVATAR_LEGACY_KEY = "spy_avatar";
 
@@ -1394,7 +1445,7 @@ class Game {
     const q = new URLSearchParams(location.search);
     const pin = q.get("dev") || q.get("debug");
     if (pin && this.devPinOk(pin)) {
-      sessionStorage.setItem("spy_dev_auth", "1");
+      sess.set("spy_dev_auth", "1");
       this.enableDev(true);
     }
     if (pin) {
@@ -1407,7 +1458,7 @@ class Game {
   }
 
   requestDev() {
-    if (sessionStorage.getItem("spy_dev_auth") === "1") {
+    if (sess.get("spy_dev_auth") === "1") {
       if (this.devMode) this.disableDev();
       else this.enableDev();
       return;
@@ -1421,7 +1472,7 @@ class Game {
   submitDevPin() {
     const v = this.$("dev-pin-input").value.trim();
     if (v && this.devPinOk(v)) {
-      sessionStorage.setItem("spy_dev_auth", "1");
+      sess.set("spy_dev_auth", "1");
       this.$("dev-lock-modal").classList.add("hidden");
       this.enableDev();
     } else {
@@ -1431,7 +1482,7 @@ class Game {
   }
 
   enableDev(silent = false) {
-    if (sessionStorage.getItem("spy_dev_auth") !== "1") { this.requestDev(); return; }
+    if (sess.get("spy_dev_auth") !== "1") { this.requestDev(); return; }
     this.devMode = true;
     this.$("dev-toggle").classList.remove("hidden");
     this.updateDevPanel();
@@ -1443,7 +1494,7 @@ class Game {
     this.devMode = false;
     this.$("dev-toggle").classList.add("hidden");
     this.$("dev-panel").classList.add("hidden");
-    sessionStorage.removeItem("spy_dev_auth");
+    sess.del("spy_dev_auth");
     this.stopDevRefresh();
     this.toast("Dev mode off");
   }
@@ -3017,10 +3068,58 @@ class Game {
 
 window.addEventListener("load", () => {
   window.game = new Game();
-  // offline shell (same-origin only — inert on file:// or blocked contexts)
+  // offline shell: production only. On local dev the SW cache is what made
+  // a stopped server still load the game, so skip registration there and
+  // purge any SW + spy-* cache left over from earlier testing.
+  // Bypass also works anywhere with ?nosw=1.
   try {
+    const qs = new URLSearchParams(location.search);
+    const host = location.hostname || "";
+    const isLocalDev = host === "localhost" || host === "127.0.0.1" || host === "::1"
+      || host.endsWith(".localhost") || host.endsWith(".local");
+    if (isLocalDev || qs.has("nosw")) {
+      try {
+        if ("serviceWorker" in navigator) {
+          navigator.serviceWorker.getRegistrations().then(rs => {
+            rs.forEach(r => { try { r.unregister(); } catch (e) {} });
+          }).catch(() => {});
+        }
+      } catch (e) {}
+      try {
+        if ("caches" in window) {
+          caches.keys().then(ks => {
+            ks.filter(k => k.indexOf("spy-") === 0).forEach(k => { caches.delete(k).catch(() => {}); });
+          }).catch(() => {});
+        }
+      } catch (e) {}
+      return;
+    }
     if ("serviceWorker" in navigator && /^https?:$/.test(location.protocol)) {
-      navigator.serviceWorker.register("sw.js").catch(() => {});
+      navigator.serviceWorker.register("sw.js").then(reg => {
+        // A new SW means new ?v= assets: take over at once so the old
+        // cached script.js can't keep running after a deploy.
+        try {
+          if (reg.waiting) reg.waiting.postMessage({ type: "SKIP_WAITING" });
+          reg.addEventListener("updatefound", () => {
+            const nw = reg.installing;
+            if (!nw) return;
+            nw.addEventListener("statechange", () => {
+              if (nw.state === "installed" && navigator.serviceWorker.controller) {
+                try { reg.waiting && reg.waiting.postMessage({ type: "SKIP_WAITING" }); } catch (e) {}
+              }
+            });
+          });
+        } catch (e) {}
+      }).catch(() => {});
+      // New SW took over — reload once to run the fresh shell.
+      try {
+        let reloaded = false;
+        navigator.serviceWorker.addEventListener("controllerchange", () => {
+          if (reloaded) return;
+          reloaded = true;
+          try { window.location.reload(); } catch (e) {}
+        });
+      } catch (e) {}
     }
   } catch (e) {}
 });

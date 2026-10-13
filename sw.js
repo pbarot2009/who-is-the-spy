@@ -1,9 +1,15 @@
 // Who is the Spy? — offline shell cache. Bump CACHE on every release.
-const CACHE = "spy-v13";
-const SHELL = ["./", "index.html", "styles.css?v=13", "script.js?v=13", "manifest.webmanifest", "assets/lobby-loop.wav"];
+const CACHE = "spy-v15";
+const SHELL = ["./", "index.html", "styles.css?v=15", "script.js?v=15", "manifest.webmanifest", "assets/lobby-loop.wav"];
 
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()).catch(() => {}));
+});
+
+self.addEventListener("message", e => {
+  if (e && e.data && e.data.type === "SKIP_WAITING") {
+    try { self.skipWaiting(); } catch (err) {}
+  }
 });
 
 self.addEventListener("activate", e => {

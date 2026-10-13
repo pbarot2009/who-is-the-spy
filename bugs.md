@@ -269,3 +269,19 @@ Left as-is on purpose:
 Music (v13):
 - [done] Real lobby track: assets/lobby-loop.wav — 16s light loop (I–V–vi–IV pads, soft bass, pentatonic plucks, shaker), original composition generated in-repo, no license/attribution needed, no download, works offline. Picks over Pixabay (login-walled downloads, Content-ID registrations) and Incompetech (CC-BY credit required).
 - Plays from file with loop + voice ducking; synth sequencer stays as automatic fallback when the file is missing/offline. Music stops when gameplay starts, on finals, and when the tab hides. Cached immutable (server + Vercel + _headers) and in the SW shell.
+
+# round 13 — storage + stale-cache pass (v14/v15)
+
+Storage (broken saves):
+1. [fixed] `store` wrapper recursed into itself — `get` called `get`, `set` called `set`. Every read fell back to defaults, every write saved nothing. Now wraps `localStorage` directly with an in-memory fallback for private mode / quota blocks.
+2. [fixed] `store` was defined after `buildICE()` used it (temporal dead zone), so the first ICE build + TURN load ran on a missing binding. `safeParseJSON` + `store` + `sess` now sit above `BASE_STUN` / `buildICE()` / `Game`.
+3. [fixed] Raw `sessionStorage` calls for dev auth threw in private mode / blocked cookies. All 5 go through the throw-safe `sess` helper now. Added `lsOk()` probe + `getJSON`/`setJSON` helpers.
+
+Stale cache (fix invisible + ghost load with server stopped):
+4. [fixed] `script.js` content changed but the `?v=13` URL did not, so `immutable` + SW cache-first kept running the old buggy file. Bumped to `?v=14`, then `?v=15` with the localhost fix. Rule holds: new content = new `?v=`, plus `APP_VERSION` in server.js, plus `CACHE` + `SHELL` in sw.js.
+5. [fixed] SW update could sit behind the old worker. New SW posts `SKIP_WAITING` at once, page reloads once on `controllerchange`. Old `spy-*` caches purged on activate.
+6. [fixed] Localhost ghost load — stopping the server still showed the game from SW cache. SW no longer registers on local dev (`localhost`, `127.0.0.1`, `::1`, `*.localhost`, `*.local`) or with `?nosw=1`. On those hosts the app unregisters any leftover SW and deletes `spy-*` caches, so a stopped server stops loading. Production keeps the offline shell.
+7. [checked] Live headers: `/` = `no-cache`, `/sw.js` = `no-cache`, `/script.js?v=15` = `immutable`, stale `?v=14` downgraded to `max-age=3600`. `node --check` passes on all 3 JS files, storage roundtrip + blocked-storage fallback pass.
+
+One-time cleanup (old `spy-v13`/`spy-v14` still in your browser):
+- DevTools → Application → Storage → Clear site data for the localhost origin, then hard reload. Or load once with `?nosw=1`, which purges the ghosts and skips the worker.
