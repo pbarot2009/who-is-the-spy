@@ -10,7 +10,7 @@ const PORT = parseInt(process.env.PORT || "3000", 10);
 const ROOT = __dirname;
 // Bump APP_VERSION on every release and keep index.html asset URLs in sync
 // (styles.css?v=N, script.js?v=N) so phones never run stale cached files.
-const APP_VERSION = "12";
+const APP_VERSION = "13";
 
 const TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -21,6 +21,9 @@ const TYPES = {
   ".svg": "image/svg+xml",
   ".png": "image/png",
   ".ico": "image/x-icon",
+  ".wav": "audio/wav",
+  ".mp3": "audio/mpeg",
+  ".ogg": "audio/ogg",
   ".woff": "font/woff",
   ".woff2": "font/woff2",
   ".ttf": "font/ttf",
@@ -30,7 +33,8 @@ const TYPES = {
 const GZIP_RE = /\.(html|css|js|json|svg|txt|webmanifest)$/;
 
 function cacheControl(file, versioned) {
-  if (/\.(woff2?|ttf|png|ico)$/.test(file)) return "public, max-age=31536000, immutable";
+  if (/sw\.js$/.test(file)) return "no-cache, must-revalidate";
+  if (/\.(woff2?|ttf|png|ico|wav|mp3|ogg)$/.test(file)) return "public, max-age=31536000, immutable";
   // versioned (?v=N)CSS/JS are unique per release — cache hard, they can't go stale
   if (versioned && /\.(css|js|json|svg)$/.test(file)) return "public, max-age=31536000, immutable";
   if (/\.(css|js)$/.test(file)) return "public, max-age=3600";
@@ -67,11 +71,15 @@ function send(req, res, filePath, stats, versioned) {
   if (acceptGzip && GZIP_RE.test(filePath)) {
     headers["Content-Encoding"] = "gzip";
     res.writeHead(200, headers);
-    fs.createReadStream(filePath).pipe(zlib.createGzip()).pipe(res);
+    const src = fs.createReadStream(filePath);
+    src.on("error", () => { try { if (!res.headersSent) res.writeHead(500); res.end(); } catch (e) {} });
+    src.pipe(zlib.createGzip()).on("error", () => { try { res.end(); } catch (e) {} }).pipe(res);
   } else {
     headers["Content-Length"] = stats.size;
     res.writeHead(200, headers);
-    fs.createReadStream(filePath).pipe(res);
+    const src = fs.createReadStream(filePath);
+    src.on("error", () => { try { if (!res.headersSent) res.writeHead(500); res.end(); } catch (e) {} });
+    src.pipe(res);
   }
 }
 
@@ -100,8 +108,10 @@ const server = http.createServer((req, res) => {
       });
     });
   } catch (e) {
-    res.writeHead(500);
-    res.end("error");
+    try {
+      if (!res.headersSent) res.writeHead(500);
+      res.end("error");
+    } catch (e2) { try { res.end(); } catch (e3) {} }
   }
 });
 

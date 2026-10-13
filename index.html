@@ -14,9 +14,11 @@
   <meta property="og:type" content="website">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='112' fill='%237c5cfc'/%3E%3Ctext x='256' y='350' font-size='260' text-anchor='middle' fill='white' font-family='sans-serif' font-weight='bold'%3E%3F%3C/text%3E%3C/svg%3E">
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="styles.css?v=12">
+  <link rel="stylesheet" href="styles.css?v=13">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+  <link rel="preconnect" href="https://unpkg.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&family=Sora:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 </head>
@@ -31,7 +33,7 @@
         <div id="connection-status" class="status offline" role="status" aria-live="polite">
           <span class="dot"></span><span id="status-text">Offline</span>
         </div>
-        <button id="wallet-pill" class="wallet-pill" title="Coins and shop">
+        <button id="wallet-pill" class="wallet-pill" title="Coins and shop" aria-label="Coins and shop">
           <i class="fa-solid fa-coins"></i> <span id="coin-balance">100</span>
         </button>
         <span id="streak-chip" class="hud-chip streak hidden" title="Win streak"><i class="fa-solid fa-fire"></i> <span id="streak-count">0</span></span>
@@ -106,7 +108,7 @@
                 <strong id="display-code">-----</strong>
               </div>
               <div class="room-btns">
-                <button id="share-code" class="btn small ghost" title="Share invite"><i class="fa-solid fa-share-nodes"></i></button>
+                <button id="share-code" class="btn small ghost" title="Share invite" aria-label="Share invite"><i class="fa-solid fa-share-nodes"></i></button>
                 <button id="copy-code" class="btn small"><i class="fa-solid fa-copy"></i> Copy</button>
               </div>
             </div>
@@ -184,12 +186,12 @@
           <div class="chat-header"><i class="fa-solid fa-comments"></i> Chat <span id="vote-progress" class="vote-progress hidden"></span></div>
           <div class="chat-messages" id="chat-messages" aria-live="polite"></div>
           <div class="emote-bar" id="emote-bar" aria-label="Quick reactions">
-            <button data-emote="😂">😂</button>
-            <button data-emote="🔥">🔥</button>
-            <button data-emote="🕵️">🕵️</button>
-            <button data-emote="👏">👏</button>
-            <button data-emote="😮">😮</button>
-            <button id="prompt-btn" title="Send an icebreaker question"><i class="fa-solid fa-lightbulb"></i></button>
+            <button data-emote="😂" aria-label="Laugh">😂</button>
+            <button data-emote="🔥" aria-label="Fire">🔥</button>
+            <button data-emote="🕵️" aria-label="Spy">🕵️</button>
+            <button data-emote="👏" aria-label="Clap">👏</button>
+            <button data-emote="😮" aria-label="Wow">😮</button>
+            <button id="prompt-btn" title="Send an icebreaker question" aria-label="Send an icebreaker question"><i class="fa-solid fa-lightbulb"></i></button>
           </div>
           <div class="chat-input">
             <input type="text" id="chat-input" placeholder="Ask a question…" maxlength="180" autocomplete="off" enterkeyhint="send">
@@ -200,7 +202,7 @@
 
       <div class="action-bar" id="action-bar">
         <button id="vote-now-btn" class="action-btn"><i class="fa-solid fa-check-to-slot"></i><span>Vote</span></button>
-        <button id="guess-now-btn" class="action-btn spy-only ghost-hide"><i class="fa-solid fa-map-location-dot"></i><span>Guess</span></button>
+        <button id="guess-now-btn" class="action-btn ghost-hide"><i class="fa-solid fa-map-location-dot"></i><span>Guess</span></button>
         <button id="voice-btn" class="action-btn"><i class="fa-solid fa-microphone-slash"></i><span>Voice</span></button>
         <button id="sound-btn" class="action-btn"><i class="fa-solid fa-volume-high"></i><span>Sound</span></button>
         <button id="quit-btn" class="action-btn danger"><i class="fa-solid fa-door-open"></i><span>Leave</span></button>
@@ -213,7 +215,7 @@
         <button class="modal-x" data-close="vote-modal" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
         <h2><i class="fa-solid fa-check-to-slot"></i> Vote for the Spy</h2>
         <p class="modal-sub">Who is acting suspicious? <span id="vote-timer-sub"></span></p>
-        <div id="vote-options" class="vote-options"></div>
+        <div id="vote-options" class="vote-options" role="listbox" aria-label="Vote for the spy"></div>
         <button id="confirm-vote" class="btn primary" disabled><i class="fa-solid fa-check"></i> Confirm Vote</button>
       </div>
     </div>
@@ -225,7 +227,7 @@
         <h2><i class="fa-solid fa-map-location-dot"></i> Guess the Location</h2>
         <p class="modal-sub">Nail it for <strong>+3 points</strong>. Wrong guess costs nothing.</p>
         <input type="text" id="guess-search" placeholder="Search locations…" autocomplete="off">
-        <div id="guess-options" class="vote-options"></div>
+        <div id="guess-options" class="vote-options" role="listbox" aria-label="Guess the location"></div>
         <button id="confirm-guess" class="btn primary" disabled><i class="fa-solid fa-paper-plane"></i> Submit Guess</button>
       </div>
     </div>
@@ -387,7 +389,7 @@
     <div id="voice-audio" class="voice-audio" aria-hidden="true"></div>
   </div>
 
-  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
-  <script src="script.js?v=12"></script>
+  <script defer src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script defer src="script.js?v=13"></script>
 </body>
 </html>

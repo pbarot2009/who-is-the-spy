@@ -203,3 +203,69 @@ Reference: Duolingo web/mobile system (16px CTA radius, 4px hard lip, pill badge
 4. [done] Unstyled sweep — scripted class audit over HTML+JS vs CSS; one dead class (gold) removed, everything else traced to a rule.
 5. [done] New mascot — detective owl (ear tufts, spy band, beak, fedora, magnifier, theme-tinted body) replacing the old figure.
 6. [done] Micro polish — modal grabber bar, selection color, placeholder tone, dd option press + selected ring, emote pills with lips, chunky shop buttons, send button lip, chunky gift/kick buttons with hover, bolder chat header, how-to summary hover, deduped focus rules.
+
+# round 12 — full re-audit (5 parallel passes) + real lobby music (v13)
+
+Bugs found and fixed (all verified in code before patching):
+
+Logic (P1):
+1. [fixed] Bot could be picked as spy — pickNewRound drew from all players, but bots can't be voted, so a bot spy auto-escaped. Spy pool is humans only now.
+2. [fixed] Bots counted toward the 3-player minimum and the 6+ Double-Spy gate — 1 human + 2 bots could start. Minimums count real (non-bot) players now.
+3. [fixed] Guest could forge another player's vote — host trusted data.id without checking the sender. Host drops votes where conn.peer !== data.id.
+4. [fixed] Spy guess ignored mode + phase — a guess in Hardcore mode or mid-discussion awarded +3 and ended the round. Host checks reveal phase + guess-enabled mode; submit path toasts why it refuses.
+5. [fixed] Guest End Game desynced the room — guest click rendered finals locally while the room kept playing. endGame is host-only now (guests get a toast).
+6. [fixed] Votes for a kicked/left player were wasted with the voter locked out — ballots targeting the removed id are cleared so the tally closes correctly.
+7. [fixed] Streak counted team results as personal ones — caught spies and wrong-voters still gained streak. Streak is personal now: spy wins by escaping, citizens win by catching without voting a citizen.
+
+Stability (P0):
+8. [fixed] Boot crash when storage throws — constructor read localStorage raw; private-mode SecurityError killed new Game(). All storage goes through the throw-safe store helper now.
+9. [fixed] new Peer() outside try left Create/Join stuck disabled — constructor throw skipped the re-enable. Both paths catch, re-enable, and toast.
+10. [fixed] Double open listener (on + once) dialed the host twice — ghost duplicate conns. once only.
+11. [fixed] Bare conn.send in the open handler could throw and hang join until the 12s timer. Uses the safe sendTo wrapper now.
+12. [fixed] Host tab close never sent hostLeft — no pagehide handler. Best-effort hostLeft broadcast on pagehide.
+13. [fixed] Host discuss/vote timer drifted in background tabs (timeLeft-- under throttling). Ticks recompute from endsAt wall clock.
+14. [fixed] Guests stuck on role screen if the host died in the 3.5s role window. 9s fallback sends syncReq + toast.
+15. [fixed] Two 12s join watchdogs each scheduled a retry — duplicate peers. One shared retry guard.
+16. [fixed] unavailable-id retry leaked the old peer. Destroyed before minting the new code.
+17. [fixed] SW fetch with empty cache + offline resolved undefined (respondWith throw). Returns a 503 offline Response.
+18. [fixed] Static server pipe errors hung responses; outer catch could throw headers-sent. Stream error handlers + headersSent guard. sw.js is no-cache now.
+
+Voice/sound/music:
+19. [fixed] Ducking stuck at half volume after mic off — stopVoice never re-applied gain. applyDuck() runs on stop, volume change, and boot.
+20. [fixed] Sound-off left the lobby loop playing. Both sound toggles stop the music; turning sound back on restarts it in lobby.
+21. [fixed] Lobby-music toggle muted result stingers (win/lose phrases went through the music flag). Stingers check SFX only.
+22. [fixed] Enabling music while the AudioContext was still suspended bailed with no retry. resume() promise retries the start once unlocked.
+23. [fixed] Voice error path leaked the <audio> node (close detached, error didn't). Both detach now.
+24. [fixed] Disconnect/kick deleted the voice-call map entry without close() — remote side stayed up, untracked. close() first now.
+25. [fixed] Outgoing close wiped a replacement call (no identity check, unlike incoming). Identity-checked now.
+26. [fixed] getUserMedia showed "Mic blocked" for missing/busy mics too. Per-error text (no mic / busy / blocked).
+27. [fixed] Duplicate randomSeed declaration (lines 157/159). One kept.
+
+UI/a11y:
+28. [fixed] Vote/guess options were mouse-only divs. tabindex + role=option + Enter/Space + aria-selected/labels.
+29. [fixed] Custom dropdowns were mouse-only with labels pointing at display:none selects. Buttons carry the label, options take focus, arrows/Enter/Escape work.
+30. [fixed] Modals never took focus. All six focus their first field on open.
+31. [fixed] Wallet/share/prompt/emote buttons had title-only names. aria-labels added.
+32. [fixed] :focus-visible missed modal-X, emotes, pick grids, tabs, shop/gift/kick buttons, how-to summary. Covered now.
+33. [fixed] Emote buttons (38–40px) and modal close (38px) under the 44px target. 44px now.
+34. [fixed] Player chips clipped long names with no ellipsis. Truncation matches lobby rows.
+35. [fixed] Light theme set surface == card (chat nesting lost separation). Surface split to #edf0f7.
+
+Perf:
+36. [fixed] Chat rebuilt all 120 rows per message (twice, incl. lobby box). Single-node append fast path; full rebuild only for sync/welcome.
+37. [fixed] endGame left the host 1Hz timer + broadcast running behind finals. Cleared on end.
+38. [fixed] PeerJS + game script blocked first paint; no preconnect for cdnjs/unpkg. defer + preconnect added.
+39. [fixed] SW served stale index.html (cache-first) against the server's no-cache. Network-first for entry HTML; versioned ?v=13 URLs in the precache shell.
+40. [fixed] Music scheduler woke every 25ms. 60ms tick with 250ms lookahead (same timing).
+41. [fixed] SFX/synth nodes never disconnected (GC churn over long lobbies). onended disconnect added.
+42. [fixed] Scroll listener ran querySelector per tick. Open-dropdown counter fast-path.
+
+Left as-is on purpose:
+- Double-spy round ends when the top-voted player(s) are all spies — catching 1 of 2 still wins the round for citizens (round-based scoring, not elimination of both).
+- Coins stay local/cosmetic (no P2P mint authority) — payouts only reward correct votes, escapes, correct guesses.
+- 4 font families kept (visual identity); display=swap + preconnect cover the cost.
+- FA full CDN kept (documented future subset swap).
+
+Music (v13):
+- [done] Real lobby track: assets/lobby-loop.wav — 16s light loop (I–V–vi–IV pads, soft bass, pentatonic plucks, shaker), original composition generated in-repo, no license/attribution needed, no download, works offline. Picks over Pixabay (login-walled downloads, Content-ID registrations) and Incompetech (CC-BY credit required).
+- Plays from file with loop + voice ducking; synth sequencer stays as automatic fallback when the file is missing/offline. Music stops when gameplay starts, on finals, and when the tab hides. Cached immutable (server + Vercel + _headers) and in the SW shell.
