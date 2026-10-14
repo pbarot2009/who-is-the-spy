@@ -76,6 +76,7 @@ const COLORS = ["#7c5cfc", "#ef4444", "#22c55e", "#f59e0b", "#0ea5e9", "#ec4899"
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 const PEER_PREFIX = "whos-spy-v1-";
 const MIN_PLAYERS = 3;
+
 function safeParseJSON(raw, fallback) {
   try {
     if (!raw) return fallback;
@@ -105,7 +106,6 @@ const store = {
     return this._lsOk;
   },
   get(k, f) {
-    // dirty keys: memory is newer than disk (disk write failed) — read it first
     try {
       if (Object.prototype.hasOwnProperty.call(this._dirty, k)
         && Object.prototype.hasOwnProperty.call(this._mem, k)) return this._mem[k];
@@ -123,7 +123,7 @@ const store = {
     const s = String(v);
     try { this._mem[k] = s; } catch (e) {}
     try { window.localStorage.setItem(k, s); try { delete this._dirty[k]; } catch (e2) {} }
-    catch (e) { try { this._dirty[k] = 1; } catch (e2) {} /* quota/private-mode: memory copy still holds */ }
+    catch (e) { try { this._dirty[k] = 1; } catch (e2) {} }
   },
   del(k) {
     try { delete this._mem[k]; } catch (e) {}
@@ -137,11 +137,9 @@ const store = {
     try { this.set(k, JSON.stringify(obj)); } catch (e) {}
   }
 };
-// Session-scoped flag (dev auth). Same throw-safe pattern — raw
-// sessionStorage throws in private mode / blocked cookies.
+
+// Session-scoped flag (dev auth). Same throw-safe pattern.
 const sess = {
-  // in-tab memory mirror: blocked sessionStorage (private mode) must not
-  // silently drop flags like dev auth mid-session
   _mem: Object.create(null),
   get(k) {
     try {
@@ -171,17 +169,13 @@ const BASE_STUN = [
   { urls: "stun:stun3.l.google.com:19302" },
   { urls: "stun:stun4.l.google.com:19302" }
 ];
-// Optional TURN relay for symmetric/carrier NATs.
-// Set localStorage "spy_turn" to JSON like {"urls":"turn:host:3478","username":"u","credential":"p"}.
-// Without TURN ~15-20% of mobile networks fail P2P — error text says so.
+
 function buildICE() {
   const servers = [...BASE_STUN];
   try {
     const raw = store.get("spy_turn");
     if (raw) {
       const parsed = JSON.parse(raw);
-      // single object (back-compat) or a list — UDP/TCP/TLS variants welcome:
-      // symmetric/CG-NAT and UDP-blocking firewalls need more than one entry
       const list = Array.isArray(parsed) ? parsed : [parsed];
       list.forEach(t => { if (t && t.urls) servers.push(t); });
     }
@@ -239,8 +233,6 @@ function svgFace(seed) {
 function randomSeed() { return Math.random().toString(36).slice(2, 10); }
 
 // ---------- Avatar v2: layered components, DiceBear-style ----------
-// Each category is an array of variants; the builder picks by index,
-// Shuffle picks by seeded PRNG. Renderer is pure: same object, same face.
 const AV2_SKIN = ["#ffd9b3", "#f1c27d", "#e0ac69", "#c68642", "#8d5524", "#ffdbac"];
 const AV2_BG = [...COLORS];
 const AV2_EYES = [
@@ -324,6 +316,7 @@ class Game {
   constructor() {
     this.peer = null;
     this.connections = new Map(); // host: peerId -> conn | guest: "host" -> conn
+    this.pendingPlayers = new Map(); // host: mid-game joiners queued for next round
     this.isHost = false;
     this.myId = null;
     this.myName = (store.get("spy_name", "") || "").slice(0, 16);
@@ -338,8 +331,12 @@ class Game {
     this.roleTimeout = null;
     this.timeLeft = 0;
     this.myVote = null;
+    this.pendingVote = null;
     this.votes = {};
     this.spyGuess = null;
+    this.guessSubmitted = false;
+    this._rewardedRound = 0;
+    this._guessRewardedRound = 0;
     this.chatHistory = [];
     this.seenMsgIds = new Set();
     this.soundEnabled = store.get("spy_sound", "true") !== "false";
@@ -350,6 +347,7 @@ class Game {
     this.voteTime = this.clampInt(store.get("spy_vote", "45"), 45, 15, 120);
     this.devMode = false;
     this.devInterval = null;
+    this._fpsRAF = null;
     this.syncInterval = null;
     this.audioCtx = null;
     this.masterGain = null;
@@ -405,7 +403,6 @@ class Game {
   }
 
   loadAvatar() {
-    // v2 key first; migrate v1 (svgSeed or FA icon) once, then drop the old key.
     const v2 = safeParseJSON(store.get(AVATAR_KEY, null), null);
     if (v2 && v2.v === 2) return this.sanitizeAvatar(v2);
     const legacyRaw = store.get(AVATAR_LEGACY_KEY, null);
@@ -457,7 +454,6 @@ class Game {
         try {
           const pr = this.audioCtx.resume();
           if (pr && pr.then) pr.then(() => {
-            // context just unlocked — retry lobby music once if it bailed earlier
             if (this.musicOn && this.phase === "lobby" && !this.music && !this._lobbyFile) this.startLobbyMusic();
           }).catch(() => {});
         } catch (e) {}
@@ -469,7 +465,7 @@ class Game {
   applyDuck() {
     try {
       if (this.masterGain) this.masterGain.gain.value = 0.8 * this.volume * (this.voiceOn ? 0.5 : 1);
-      if (this._lobbyFile) this._lobbyFile.volume = (this.musicOn ? 0.55 : 0) * (this.voiceOn ? 0.5 : 1);
+      if (this._lobbyFile) this._lobbyFile.volume = (this.musicOn ? 0.55 : 0) * this.volume * (this.voiceOn ? 0.5 : 1);
     } catch (e) {}
   }
 
@@ -496,7 +492,7 @@ class Game {
     if (!this.soundEnabled) return;
     try {
       const now = performance.now();
-      if (type === this._lastS && now - this._lastST < 70) return; // collapse double-fires
+      if (type === this._lastS && now - this._lastST < 70) return;
       this._lastS = type; this._lastST = now;
     } catch (e) {}
     switch (type) {
@@ -553,16 +549,13 @@ class Game {
     } catch (e) {}
   }
 
-  // Lobby music: real looped file first (assets/lobby-loop.wav, original,
-  // generated, no license needed), synth sequencer as offline fallback.
   lobbyFileEl() {
     if (!this._lobbyFile) {
       const a = new Audio();
       a.loop = true;
       a.preload = "none";
-      a.src = "assets/lobby-loop.wav?v=15";
+      a.src = "assets/lobby-loop.wav?v=16";
       a.addEventListener("error", () => {
-        // file missing/offline mid-play — fall back to the synth loop once
         if (this.phase === "lobby" && this.music && (this.music.mode === "file-wait" || this.music.mode === "file")) this.startLobbySynth();
       });
       this._lobbyFile = a;
@@ -573,21 +566,18 @@ class Game {
   startLobbyMusic() {
     if (!this.musicOn || !this.soundEnabled) return;
     if (this.phase !== "lobby") return;
-    if (this.music) return; // file or synth already playing
+    if (this.music) return;
     if (!this.ensureAudio()) return;
     this.stopMusic(true);
-    // Prefer the real looped track; it needs a user gesture (we are called
-    // from pointerdown / toggle / lobby show, so play() should succeed).
     try {
       const a = this.lobbyFileEl();
-      a.volume = 0.55 * (this.voiceOn ? 0.5 : 1);
+      a.volume = 0.55 * this.volume * (this.voiceOn ? 0.5 : 1);
       this.music = { mode: "file-wait" };
       const p = a.play();
       const onOk = () => { if (this.music && this.music.mode === "file-wait") this.music = { mode: "file" }; };
       const onFail = () => { if (this.music && this.music.mode === "file-wait") this.startLobbySynth(); };
       if (p && p.then) p.then(onOk, onFail);
       else onOk();
-      // safety: if neither play nor error resolves, fall back after 1.5s
       setTimeout(() => { if (this.music && this.music.mode === "file-wait" && a.paused) this.startLobbySynth(); }, 1500);
       return;
     } catch (e) { /* fall through to synth */ }
@@ -598,8 +588,6 @@ class Game {
     if (!this.ensureAudio()) return;
     if (this.audioCtx.state !== "running") return;
     this.stopMusic(true);
-    // I–V–vi–IV in C, 8 steps per chord, A/B pluck phrases alternate (20s loop).
-    // Bass runs 24 steps against the 32-step melody, so the full cycle repeats at ~30s.
     const N = { C3: 130.81, G2: 98.0, A2: 110.0, F2: 87.31, C4: 261.63, D4: 293.66, E4: 329.63, G3: 196.0, B3: 246.94, A3: 220.0, F3: 174.61, C5: 523.25, D5: 587.33, E5: 659.25, G5: 783.99, A5: 880.0, C6: 1046.5 };
     const roots = [N.C3, N.G2, N.A2, N.F2];
     const pads = [[N.C4, N.E4, N.G3], [N.G3, N.B3, N.D4], [N.A3, N.C4, N.E4], [N.F3, N.A3, N.C4]];
@@ -643,7 +631,6 @@ class Game {
   }
 
   playPhrase(notes) {
-    // one-shot stinger — SFX flag only; lobby-music toggle must not mute results
     if (!this.soundEnabled) return;
     if (!this.ensureAudio()) return;
     const t0 = this.audioCtx.currentTime + 0.05;
@@ -706,7 +693,6 @@ class Game {
     if (this.myName) this.$("player-name").value = this.myName;
     const lastCode = store.get("spy_lastcode", "");
     if (lastCode) this.$("room-code").value = lastCode;
-    // invite links carry the code as #ABCDE or ?room=ABCDE — prefill so friends never mistype it
     try {
       const h = (location.hash || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 5);
       if (h.length === 5) this.$("room-code").value = h;
@@ -731,8 +717,6 @@ class Game {
   }
 
   buildThemeOptions() {
-    // settings picker mirrors shop ownership — locked themes show a lock
-    // instead of silently working for free
     const sel = this.$("theme-select");
     if (!sel) return;
     const cur = store.get("spy_theme", "dark") || "dark";
@@ -744,12 +728,9 @@ class Game {
   applyTheme(theme, opts) {
     const ok = ["dark", "light", "spy", "ocean", "forest"];
     const t = ok.includes(theme) ? theme : "dark";
-    // locked theme picked without owning it (settings) — refuse + point at shop
     if (!this.themeIsOwned(t) && !(opts && opts.allowLocked)) {
       const sel = this.$("theme-select");
       const cur = store.get("spy_theme", "dark") || "dark";
-      // boot stored a theme the shop now gates — fall back silently, no
-      // toast/sound before first paint; interactive picks get the message
       const silent = !!(opts && opts.silent);
       const fallback = this.themeIsOwned(cur) ? cur : "dark";
       document.body.className = fallback === "dark" ? "" : `theme-${fallback}`;
@@ -771,8 +752,6 @@ class Game {
   }
 
   focusModal(id) {
-    // move keyboard focus inside the dialog so Esc/focus order work;
-    // remember the opener so focus returns on dismiss (W3C dialog pattern)
     const m = this.$(id);
     if (!m) return;
     try { this._lastFocus = document.activeElement; } catch (e) {}
@@ -788,7 +767,6 @@ class Game {
   }
 
   trapTab(e) {
-    // keep Tab inside the topmost open modal (W3C modal dialog pattern)
     if (e.key !== "Tab") return;
     const open = [...document.querySelectorAll(".modal:not(.hidden)")].filter(m => m.offsetParent !== null);
     if (!open.length) return;
@@ -830,7 +808,10 @@ class Game {
       else if (this.isHost && (this.phase === "discuss" || this.phase === "role")) this.startVoting();
       else this.toast(this.phase === "lobby" ? "Start the game first" : "Voting is not open yet");
     };
-    this.$("guess-now-btn").onclick = () => { if (this.isSpy) this.openGuessModal(); };
+    this.$("guess-now-btn").onclick = () => {
+      if (this.isSpy && !this.guessSubmitted) this.openGuessModal();
+      else if (this.guessSubmitted) this.toast("You already submitted a guess this round");
+    };
     this.$("sound-btn").onclick = () => {
       this.soundEnabled = !this.soundEnabled;
       store.set("spy_sound", String(this.soundEnabled));
@@ -905,7 +886,6 @@ class Game {
         return;
       }
       this.trapTab(e);
-      // Alt+D opens the dev gate (ignored while typing in a field)
       const tag = (document.activeElement && document.activeElement.tagName) || "";
       const typing = tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA";
       if (!typing && e.altKey && (e.key === "d" || e.key === "D")) {
@@ -926,7 +906,6 @@ class Game {
     title.addEventListener("pointerup", cancelPress);
     title.addEventListener("pointerleave", cancelPress);
     title.addEventListener("pointercancel", cancelPress);
-    // stop the mobile long-press menu from eating the gesture
     title.addEventListener("contextmenu", e => e.preventDefault());
     title.addEventListener("click", () => {
       clicks++;
@@ -963,7 +942,6 @@ class Game {
     this.$("dev-kick").onclick = () => this.devKick();
     this.$("dev-end-game").onclick = () => this.endGame();
 
-    // unlock audio on first touch (autoplay policy best practice)
     window.addEventListener("pointerdown", () => {
       this.ensureAudio();
       try {
@@ -973,13 +951,12 @@ class Game {
       } catch (e) {}
       this.startLobbyMusic();
     }, { passive: true });
-    // mobile backgrounding drops sockets — heal on return
+
     document.addEventListener("visibilitychange", () => {
       if (document.hidden !== false || !this.peer || !this.roomCode) return;
       if (this.phase === "lobby") this.startLobbyMusic();
       if (this.isHost) {
         if (this.peer.disconnected) { try { this.peer.reconnect(); } catch (e) {} }
-        // backgrounded tabs throttle setTimeout — heal role phase by timestamp
         if (this.phase === "role" && this.roleEndsAt && Date.now() >= this.roleEndsAt) this.startDiscussion();
       } else {
         const host = this.connections.get("host");
@@ -991,8 +968,7 @@ class Game {
         } else this.sendToHost({ type: "syncReq" });
       }
     });
-    // Host tab closed/killed: best-effort hostLeft so guests see "Room Closed"
-    // instead of a frozen screen. DataChannel may not flush — also best-effort.
+
     window.addEventListener("pagehide", () => {
       try {
         if (this.isHost && this.roomCode && this.connections.size) {
@@ -1001,7 +977,6 @@ class Game {
       } catch (e) {}
     });
 
-    // new UI wiring
     this.$("voice-btn").onclick = () => this.toggleVoice();
     this.$("wallet-pill").onclick = () => this.openShop();
     this.$("avatar-btn").onclick = () => this.openAvatar();
@@ -1015,34 +990,27 @@ class Game {
     });
     this.buildLobbyPicks();
     ["theme-select", "category-select", "mode-select", "gift-to"].forEach(id => this.enhanceSelect(this.$(id)));
-    // click blip on every tappable control (70ms dedupe kills double-fires)
     document.addEventListener("click", e => {
       const t = e.target && e.target.closest ? e.target.closest(".btn,.icon-btn,.action-btn,.dd-btn,.dd-opt,.vote-option,.modal-x,.pick-grid button,.tab-row button,.emote-bar button,.shop-item button,.chat-input button,.dev-buttons button,.gift-btn,.kick-btn,.duo-check,.wallet-pill,details.how-card summary") : null;
       if (t && !t.disabled) this.playSound("click");
     });
-    // music never plays to an empty room — stop it backgrounded
     document.addEventListener("visibilitychange", () => {
       if (document.hidden === true) this.stopMusic(true);
     });
-    // tap outside any custom dropdown closes it
     document.addEventListener("pointerdown", e => {
       if (!e.target || !e.target.closest || !e.target.closest(".dd")) this.closeAllDropdowns();
     });
-    // scrolling the page behind a fixed list would detach it — close then,
-    // but never for scrolls inside the dropdown itself (list scroll must work)
     document.addEventListener("scroll", e => {
       if (!this._openDD) return;
       if (e.target && e.target.closest && e.target.closest(".dd")) return;
       this.closeAllDropdowns();
     }, { passive: true, capture: true });
-    // a resize/orientation move also detaches fixed lists
     window.addEventListener("resize", () => this.closeAllDropdowns());
     window.addEventListener("orientationchange", () => this.closeAllDropdowns());
     this.updateWallet();
     this.renderStreak();
   }
-
-  syncSoundBtn() {
+syncSoundBtn() {
     const btn = this.$("sound-btn");
     if (!btn) return;
     btn.innerHTML = this.soundEnabled
@@ -1091,7 +1059,6 @@ class Game {
     btn.className = "dd-btn";
     btn.setAttribute("aria-haspopup", "listbox");
     btn.setAttribute("aria-expanded", "false");
-    // keep the label link for assistive tech (native select is hidden)
     try {
       const lab = sel.parentNode && sel.parentNode.querySelector ? sel.parentNode.querySelector("label") : null;
       btn.setAttribute("aria-label", (lab ? lab.textContent.trim() : sel.getAttribute("aria-label") || sel.id) || "Choose");
@@ -1107,6 +1074,7 @@ class Game {
     syncLabel();
     btn.addEventListener("click", e => {
       e.stopPropagation();
+      if (sel.disabled || wrap.closest(".guest-locked")) return;
       const wasOpen = wrap.classList.contains("open");
       this.closeAllDropdowns();
       if (wasOpen) return;
@@ -1136,7 +1104,6 @@ class Game {
           else if (ev.key === "Home") { ev.preventDefault(); list.firstElementChild?.focus(); }
           else if (ev.key === "End") { ev.preventDefault(); list.lastElementChild?.focus(); }
           else if (ev.key.length === 1) {
-            // typeahead: jump to the next option starting with the typed char
             const ch = ev.key.toLowerCase();
             const items = [...list.children];
             const from = (items.indexOf(li) + 1) % items.length;
@@ -1149,8 +1116,6 @@ class Game {
         list.appendChild(li);
       });
       wrap.appendChild(list);
-      // Inside a scrollable modal the absolute list gets clipped — pin it
-      // to the viewport under the button instead.
       if (wrap.closest(".modal-content")) {
         const r = btn.getBoundingClientRect();
         list.classList.add("fixed");
@@ -1174,6 +1139,7 @@ class Game {
       if (first && document.activeElement === btn) setTimeout(() => { try { first.focus({ preventScroll: true }); } catch (e) {} }, 30);
     });
     btn.addEventListener("keydown", e => {
+      if (sel.disabled || wrap.closest(".guest-locked")) return;
       if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown") { e.preventDefault(); btn.click(); }
       else if (e.key === "Escape") this.closeAllDropdowns();
     });
@@ -1185,9 +1151,20 @@ class Game {
     const cat = this.$("category-select"), mode = this.$("mode-select");
     cat.innerHTML = Object.entries(CATEGORIES).map(([k, v]) => `<option value="${k}">${this.escapeHtml(v.name)}</option>`).join("");
     mode.innerHTML = Object.entries(MODES).map(([k, v]) => `<option value="${k}">${this.escapeHtml(v.name)}</option>`).join("");
-    this.setSelect(cat, this.category); this.setSelect(mode, this.mode);
-    cat.onchange = e => { this.category = e.target.value; store.set("spy_cat", this.category); if (this.isHost) this.broadcast({ type: "players", players: this.players, category: this.category, mode: this.mode }); };
-    mode.onchange = e => { this.mode = e.target.value; store.set("spy_mode", this.mode); if (this.isHost) this.broadcast({ type: "players", players: this.players, category: this.category, mode: this.mode }); };
+    this.setSelect(cat, this.category);
+    this.setSelect(mode, this.mode);
+    cat.onchange = e => {
+      if (!this.isHost && this.roomCode) { this.setSelect(cat, this.category); return; }
+      this.category = e.target.value;
+      store.set("spy_cat", this.category);
+      if (this.isHost) this.broadcast({ type: "players", players: this.players, category: this.category, mode: this.mode });
+    };
+    mode.onchange = e => {
+      if (!this.isHost && this.roomCode) { this.setSelect(mode, this.mode); return; }
+      this.mode = e.target.value;
+      store.set("spy_mode", this.mode);
+      if (this.isHost) this.broadcast({ type: "players", players: this.players, category: this.category, mode: this.mode });
+    };
   }
 
   poolFor(category) { return (CATEGORIES[category] || CATEGORIES.classic).locs; }
@@ -1202,7 +1179,7 @@ class Game {
 
   earnCoins(n) {
     if (!n) return;
-    this.coins = Math.min(99999, this.coins + n);
+    this.coins = Math.min(99999, Math.max(0, this.coins + n));
     this.updateWallet();
     if (n > 0) this.playSound("coin");
   }
@@ -1217,22 +1194,30 @@ class Game {
     this.closeAllDropdowns();
     this.updateWallet();
     const grid = this.$("shop-items");
+    const curTheme = store.get("spy_theme", "dark") || "dark";
     const card = (it) => {
       const owned = this.owned.includes(it.id);
-      const equipped = it.kind === "frame" && this.avatar.frame === it.id;
+      const equipped = (it.kind === "frame" && this.avatar.frame === it.id)
+        || (it.kind === "theme" && curTheme === it.theme);
       const demoCls = it.kind === "frame" ? it.id : "";
       const demoStyle = it.kind === "theme" && it.color
         ? `background:${it.color}`
         : `background:var(--primary)`;
       let btn;
-      if (!owned) btn = `<button data-buy="${it.id}">Buy · ${it.price} <i class="fa-solid fa-coins"></i></button>`;
-      else if (it.kind === "frame") btn = equipped
-        ? `<button class="equipped" disabled><i class="fa-solid fa-check"></i> Equipped</button>`
-        : `<button data-equip="${it.id}">Equip</button>`;
-      else btn = `<button data-apply-theme="${it.theme}">Apply</button>`;
+      if (!owned) {
+        btn = `<button type="button" data-buy="${it.id}">Buy · ${it.price} <i class="fa-solid fa-coins"></i></button>`;
+      } else if (it.kind === "frame") {
+        btn = equipped
+          ? `<button type="button" class="equipped" data-unequip="frame-none"><i class="fa-solid fa-check"></i> Equipped · Remove</button>`
+          : `<button type="button" data-equip="${it.id}">Equip</button>`;
+      } else {
+        btn = equipped
+          ? `<button type="button" class="equipped" data-apply-theme="dark"><i class="fa-solid fa-check"></i> Active · Default</button>`
+          : `<button type="button" data-apply-theme="${it.theme}">Apply</button>`;
+      }
       return `<div class="shop-item ${owned ? "owned" : ""} ${equipped ? "equipped-now" : ""}">
         <div class="demo ${demoCls}" style="${demoStyle}"><i class="fa-solid ${it.kind === "frame" ? "fa-award" : "fa-palette"}"></i></div>
-        <strong>${this.escapeHtml(it.name)}</strong><span class="price"><i class="fa-solid fa-coins"></i> ${it.price}${owned ? " · owned" : ""}${equipped ? " · equipped" : ""}</span>
+        <strong>${this.escapeHtml(it.name)}</strong><span class="price"><i class="fa-solid fa-coins"></i> ${it.price}${owned ? " · owned" : ""}${equipped ? " · active" : ""}</span>
         ${btn}
       </div>`;
     };
@@ -1244,7 +1229,13 @@ class Game {
       + `<div class="shop-grid">${themes}</div>`;
     grid.querySelectorAll("[data-buy]").forEach(b => { b.onclick = () => this.buyItem(b.dataset.buy); });
     grid.querySelectorAll("[data-equip]").forEach(b => { b.onclick = () => this.equipFrame(b.dataset.equip); });
-    grid.querySelectorAll("[data-apply-theme]").forEach(b => { b.onclick = () => this.applyTheme(b.dataset.applyTheme, { allowLocked: true }); });
+    grid.querySelectorAll("[data-unequip]").forEach(b => { b.onclick = () => this.equipFrame("frame-none"); });
+    grid.querySelectorAll("[data-apply-theme]").forEach(b => {
+      b.onclick = () => {
+        this.applyTheme(b.dataset.applyTheme, { allowLocked: true });
+        this.openShop();
+      };
+    });
     this.$("shop-modal").classList.remove("hidden");
     this.focusModal("shop-modal");
   }
@@ -1266,21 +1257,22 @@ class Game {
   }
 
   equipFrame(id, silent) {
-    // shop <-> avatar builder stay in sync: one frame, saved + broadcast
     if (!this.owned.includes(id) && id !== "frame-none") return;
     this.avatar = this.sanitizeAvatar({ ...this.avatar, frame: id });
     store.set(AVATAR_KEY, JSON.stringify(this.avatar));
+    const me = this.players.find(p => p.id === this.myId);
+    if (me) me.avatar = this.avatar;
     this.renderPlayers();
     this.broadcastAvatar();
     if (!silent) {
       this.playSound("success");
-      this.toast("Frame equipped — see it in the avatar builder too", "success");
+      this.toast(id === "frame-none" ? "Frame removed" : "Frame equipped", "success");
       this.openShop();
     }
   }
 
   avatarHtml(p, size = 36) {
-    const raw = p.avatar || { icon: "fa-user-secret", color: p.color || "#7c5cfc", frame: "frame-none" };
+    const raw = (p && p.avatar) || { icon: "fa-user-secret", color: (p && p.color) || "#7c5cfc", frame: "frame-none" };
     const a = this.sanitizeAvatar(raw);
     if (a.v === 2) {
       return `<div class="avatar av-svg ${a.frame && a.frame !== "frame-none" ? a.frame : ""}" style="width:${size}px;height:${size}px">${svgAvatarV2(a)}</div>`;
@@ -1288,7 +1280,7 @@ class Game {
     if (a.svgSeed) {
       return `<div class="avatar av-svg ${a.frame && a.frame !== "frame-none" ? a.frame : ""}" style="width:${size}px;height:${size}px">${svgFace(a.svgSeed)}</div>`;
     }
-    const initial = this.escapeHtml((p.name || "?")[0].toUpperCase());
+    const initial = this.escapeHtml(((p && p.name) || "?")[0].toUpperCase());
     const icon = a.icon && a.icon.startsWith("fa-") ? `<i class="fa-solid ${a.icon}"></i>` : initial;
     return `<div class="avatar ${a.frame && a.frame !== "frame-none" ? a.frame : ""}" style="background:${this.escapeHtml(a.color)};width:${size}px;height:${size}px;font-size:${Math.round(size * 0.42)}px">${icon}</div>`;
   }
@@ -1319,7 +1311,7 @@ class Game {
       this.renderAvatarBuilder(); this.playSound("click");
     };
     this.$("avatar-tabs").innerHTML = AV2_TABS.map(tab =>
-      `<button data-tab="${tab.key}" class="${this.avTab === tab.key ? "sel" : ""}">${tab.name}</button>`
+      `<button type="button" data-tab="${tab.key}" class="${this.avTab === tab.key ? "sel" : ""}">${tab.name}</button>`
     ).join("");
     this.$("avatar-tabs").querySelectorAll("button").forEach(b => {
       b.onclick = () => { this.avTab = b.dataset.tab; this.renderAvatarBuilder(); this.playSound("click"); };
@@ -1329,26 +1321,35 @@ class Game {
     if (tab.key === "skin" || tab.key === "bg") {
       const pal = tab.key === "skin" ? AV2_SKIN : AV2_BG;
       box.innerHTML = pal.map((c, i) =>
-        `<button data-i="${i}" class="swatch ${t[tab.key] === i ? "sel" : ""}" style="background:${c}" aria-label="${tab.name} ${i + 1}">·</button>`
+        `<button type="button" data-i="${i}" class="swatch ${t[tab.key] === i ? "sel" : ""}" style="background:${c}" aria-label="${tab.name} ${i + 1}">·</button>`
       ).join("");
     } else {
       box.innerHTML = tab.opts.map((o, i) => {
         const trial = { ...t, [tab.key]: i };
-        return `<button data-i="${i}" class="opt ${t[tab.key] === i ? "sel" : ""}" title="${this.escapeHtml(o.name)}">${svgAvatarV2(trial)}</button>`;
+        return `<button type="button" data-i="${i}" class="opt ${t[tab.key] === i ? "sel" : ""}" title="${this.escapeHtml(o.name)}">${svgAvatarV2(trial)}</button>`;
       }).join("");
     }
     box.querySelectorAll("button").forEach(b => {
       b.onclick = () => { this.tmpAvatar[tab.key] = parseInt(b.dataset.i, 10); this.renderAvatarBuilder(); this.playSound("click"); };
     });
-    const frames = ["frame-none", ...this.owned.filter(o => o.startsWith("frame-"))];
-    this.$("avatar-frames").innerHTML = frames.map(f => `<button data-f="${f}" class="${t.frame === f ? "sel" : ""}" title="${this.escapeHtml(f)}"><i class="fa-solid fa-award"></i></button>`).join("");
-    this.$("avatar-frames").querySelectorAll("button").forEach(b => { b.onclick = () => { this.tmpAvatar.frame = b.dataset.f; this.renderAvatarBuilder(); }; });
+    const frames = ["frame-none", ...new Set(this.owned.filter(o => o.startsWith("frame-") && o !== "frame-none"))];
+    this.$("avatar-frames").innerHTML = frames.map(f => {
+      const label = f === "frame-none" ? "No Frame" : (SHOP_ITEMS.find(x => x.id === f)?.name || f);
+      return `<button type="button" data-f="${f}" class="${t.frame === f ? "sel" : ""}" title="${this.escapeHtml(label)}" aria-label="${this.escapeHtml(label)}">
+        <span class="frame-dot ${f !== "frame-none" ? f : ""}"><i class="fa-solid ${f === "frame-none" ? "fa-ban" : "fa-award"}"></i></span>
+      </button>`;
+    }).join("");
+    this.$("avatar-frames").querySelectorAll("button").forEach(b => {
+      b.onclick = () => { this.tmpAvatar.frame = b.dataset.f; this.renderAvatarBuilder(); };
+    });
   }
 
   saveAvatar() {
     this.avatar = this.sanitizeAvatar(this.tmpAvatar);
     if (this.avatar.v !== 2 && !this.avatar.svgSeed) this.avatar = { ...av2Shuffle(), frame: this.avatar.frame || "frame-none" };
     store.set(AVATAR_KEY, JSON.stringify(this.avatar));
+    const me = this.players.find(p => p.id === this.myId);
+    if (me) me.avatar = this.avatar;
     this.playSound("success");
     this.toast("Avatar saved", "success");
     this.$("avatar-modal").classList.add("hidden");
@@ -1357,17 +1358,22 @@ class Game {
   }
 
   broadcastAvatar() {
+    if (!this.myId) return;
     const payload = { type: "avatar", id: this.myId, avatar: this.avatar, name: this.myName };
     if (this.isHost) this.broadcast(payload);
     else this.sendToHost(payload);
   }
 
-  openGift() {
+  openGift(targetId) {
     this.closeAllDropdowns();
     const others = this.players.filter(p => p.id !== this.myId && !p.bot);
     const gt = this.$("gift-to");
     gt.innerHTML = others.map(p => `<option value="${this.escapeHtml(p.id)}">${this.escapeHtml(p.name)}</option>`).join("") || `<option value="">No one to gift</option>`;
-    if (gt._syncDD) gt._syncDD();
+    if (targetId && others.some(p => p.id === targetId)) {
+      this.setSelect(gt, targetId);
+    } else if (gt._syncDD) {
+      gt._syncDD();
+    }
     this.updateWallet();
     this.$("gift-modal").classList.remove("hidden");
     this.focusModal("gift-modal");
@@ -1376,12 +1382,24 @@ class Game {
   sendGift() {
     const to = this.$("gift-to").value;
     const amount = this.clampInt(this.$("gift-amount").value, 0, 5, 500);
-    if (!to) return this.toast("Nobody to gift", "error");
+    if (!to || !this.players.some(p => p.id === to && !p.bot)) return this.toast("Nobody to gift", "error");
     if (amount < 5) return this.toast("Minimum gift is 5 coins", "error");
     if (amount > this.coins) return this.toast("Not enough coins", "error");
+    const now = Date.now();
+    if (now - (this._lastMyGiftAt || 0) < 2000) {
+      return this.toast("Wait a moment before sending another gift", "error");
+    }
+    if (!this.isHost) {
+      const host = this.connections.get("host");
+      if (!host || !host.open) return this.toast("Not connected to host", "error");
+    } else {
+      const targetConn = this.connections.get(to);
+      if (!targetConn || !targetConn.open) return this.toast("Player is not connected", "error");
+    }
+    this._lastMyGiftAt = now;
     this.coins -= amount;
     this.updateWallet();
-    const payload = { type: "gift", from: this.myId, fromName: this.myName, to, amount, msgId: `${this.myId}-${Date.now()}-gift` };
+    const payload = { type: "gift", from: this.myId, fromName: this.myName, to, amount, msgId: `${this.myId}-${now}-gift` };
     if (this.isHost) this.routeGift(payload);
     else this.sendToHost(payload);
     this.$("gift-modal").classList.add("hidden");
@@ -1390,22 +1408,25 @@ class Game {
   }
 
   routeGift(d, conn) {
-    // host relays to recipient; recipient credits locally.
-    // Never trust client amounts — validate type/range/target/sender here.
     const senderId = (conn && conn.peer) || d.from;
     const amount = Number(d.amount);
     if (!Number.isFinite(amount) || !Number.isInteger(amount) || amount < 5 || amount > 500) return;
     if (typeof d.to !== "string" || !this.players.some(p => p.id === d.to)) return;
     if (typeof senderId !== "string" || !this.players.some(p => p.id === senderId)) return;
-    // cheap rate limit: one gift per sender per 2s (forged floods die here)
     const now = Date.now();
     this._giftAt = this._giftAt || {};
-    if (now - (this._giftAt[senderId] || 0) < 2000) return;
+    if (conn && now - (this._giftAt[senderId] || 0) < 1900) return;
     this._giftAt[senderId] = now;
     const sender = this.players.find(p => p.id === senderId);
     const fromName = sender ? sender.name : String(d.fromName || "Someone").slice(0, 16);
     const clean = { type: "gift", from: senderId, fromName, to: d.to, amount, msgId: String(d.msgId || `${senderId}-${now}-gift`).slice(0, 64) };
-    if (clean.to === this.myId) { this.earnCoins(clean.amount); this.playSound("gift-receive"); this.addSystemMessage(`${fromName} sent you ${clean.amount} coins!`); return; }
+    if (clean.to === this.myId) {
+      this.earnCoins(clean.amount);
+      this.playSound("gift-receive");
+      this.addSystemMessage(`${fromName} sent you ${clean.amount} coins!`);
+      this.toast(`+${clean.amount} coins from ${fromName}!`, "success");
+      return;
+    }
     const target = this.connections.get(clean.to);
     if (target) this.sendTo(target, clean);
     this.addSystemMessage(`${fromName} gifted ${clean.amount} coins.`);
@@ -1419,8 +1440,12 @@ class Game {
 
   renderStreak() {
     const line = this.$("streak-line");
-    if (this.streak >= 2) { line.classList.remove("hidden"); this.$("streak-text").textContent = `${this.streak}-round win streak! Best: ${this.bestStreak}`; }
-    else line.classList.add("hidden");
+    if (this.streak >= 2) {
+      line.classList.remove("hidden");
+      this.$("streak-text").textContent = `${this.streak}-round win streak! Best: ${this.bestStreak}`;
+    } else {
+      line.classList.add("hidden");
+    }
     const chip = this.$("streak-chip");
     if (chip) {
       chip.classList.toggle("hidden", this.streak < 2);
@@ -1447,23 +1472,28 @@ class Game {
       return this.toast("Mic blocked — allow microphone access", "error");
     }
     this.voiceOn = true;
+    const me = this.players.find(p => p.id === this.myId);
+    if (me) me.voice = true;
     this.syncVoiceBtn();
     this.ensureAudio();
     this.applyDuck();
     this.toast("Voice live — talk to the room", "success");
     this.playSound("join");
-    // drop old calls (e.g. listen-only ones answered before we had a mic)
-    // so every peer gets a fresh two-way call with our stream
     this.voiceCalls.forEach(c => { try { c.close(); } catch (e) {} });
     this.voiceCalls.clear();
     this.$("voice-audio").innerHTML = "";
+    this._lastCallAll = 0;
     this.callAllPeers();
     if (this.isHost) this.broadcast({ type: "voice-state", id: this.myId, on: true });
     else this.sendToHost({ type: "voice-state", id: this.myId, on: true });
+    this.renderPlayers();
   }
 
   stopVoice() {
     this.voiceOn = false;
+    clearTimeout(this._callAllTimer);
+    const me = this.players.find(p => p.id === this.myId);
+    if (me) me.voice = false;
     try { if (this.localStream) this.localStream.getTracks().forEach(t => t.stop()); } catch (e) {}
     this.localStream = null;
     this.voiceCalls.forEach(c => { try { c.close(); } catch (e) {} });
@@ -1477,11 +1507,14 @@ class Game {
   }
 
   callAllPeers() {
-    if (!this.voiceOn || !this.localStream) return;
-    // roster pushes fire per join — debounce so one flapping peer can't
-    // trigger a call storm across the mesh
+    if (!this.voiceOn || !this.localStream || !this.peer) return;
     const now = Date.now();
-    if (now - (this._lastCallAll || 0) < 2000) return;
+    const elapsed = now - (this._lastCallAll || 0);
+    if (elapsed < 1200) {
+      clearTimeout(this._callAllTimer);
+      this._callAllTimer = setTimeout(() => this.callAllPeers(), 1250 - elapsed);
+      return;
+    }
     this._lastCallAll = now;
     const targets = this.players.map(p => p.id).filter(id => id && id !== this.myId && !id.startsWith("bot-"));
     targets.forEach(pid => {
@@ -1511,7 +1544,6 @@ class Game {
     try {
       const p = el.play && el.play();
       if (p && p.catch) p.catch(() => {
-        // iOS/Safari blocks autoplay until a gesture — next tap resumes.
         if (!this._voiceToastShown) {
           this._voiceToastShown = true;
           this.toast("Tap anywhere to hear voice");
@@ -1523,21 +1555,13 @@ class Game {
   detachVoice(pid) { const el = document.getElementById(`voice-${pid}`); if (el) el.remove(); }
 
   handleIncomingCall(call) {
-    // Track it so callAllPeers never doubles it and stopVoice kills it.
     const old = this.voiceCalls.get(call.peer);
     if (old && old !== call) { try { old.close(); } catch (e) {} }
     this.voiceCalls.set(call.peer, call);
-    const answer = () => {
-      try {
-        if (this.voiceOn && this.localStream) call.answer(this.localStream);
-        else call.answer();
-      } catch (e) { try { call.answer(); } catch (e2) {} }
-    };
-    if (this.localStream || !this.voiceOn) answer();
-    else {
-      // mic permission may come later; answer listen-only now so we still hear
-      try { call.answer(); } catch (e) {}
-    }
+    try {
+      if (this.voiceOn && this.localStream) call.answer(this.localStream);
+      else call.answer();
+    } catch (e) { try { call.answer(); } catch (e2) {} }
     call.on("stream", s => this.attachVoice(call.peer, s));
     call.on("close", () => { if (this.voiceCalls.get(call.peer) === call) this.voiceCalls.delete(call.peer); this.detachVoice(call.peer); });
     call.on("error", () => { if (this.voiceCalls.get(call.peer) === call) this.voiceCalls.delete(call.peer); this.detachVoice(call.peer); });
@@ -1546,7 +1570,6 @@ class Game {
   // ---------- confetti celebration ----------
   launchConfetti(n = 130) {
     if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    // small/slow screens get half the particles — same look, far less paint
     try {
       if (innerWidth < 480 || matchMedia("(update: slow)").matches) n = Math.ceil(n / 2);
     } catch (e) {}
@@ -1557,18 +1580,23 @@ class Game {
     const ctx = cv.getContext("2d");
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     const sizeCanvas = () => {
-      cv.width = Math.floor(innerWidth * dpr); cv.height = Math.floor(innerHeight * dpr);
+      cv.width = Math.floor(innerWidth * dpr);
+      cv.height = Math.floor(innerHeight * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
     sizeCanvas();
     this._confettiResize = sizeCanvas;
     window.addEventListener("resize", this._confettiResize);
-    const colors = [getComputedStyle(document.body).getPropertyValue("--primary") || "#7c5cfc", "#22c55e", "#f59e0b", "#ec4899", "#0ea5e9"];
+    const colors = [getComputedStyle(document.body).getPropertyValue("--primary").trim() || "#7c5cfc", "#22c55e", "#f59e0b", "#ec4899", "#0ea5e9"];
     const parts = Array.from({ length: n }, () => ({
-      x: Math.random() * cv.width, y: -20 - Math.random() * cv.height * 0.3,
-      w: 5 + Math.random() * 6, h: 8 + Math.random() * 8,
-      vy: 2 + Math.random() * 3, vx: -1.5 + Math.random() * 3,
-      r: Math.random() * Math.PI, vr: -0.1 + Math.random() * 0.2,
+      x: Math.random() * innerWidth,
+      y: -20 - Math.random() * innerHeight * 0.3,
+      w: 5 + Math.random() * 6,
+      h: 8 + Math.random() * 8,
+      vy: 2 + Math.random() * 3,
+      vx: -1.5 + Math.random() * 3,
+      r: Math.random() * Math.PI,
+      vr: -0.1 + Math.random() * 0.2,
       c: colors[Math.floor(Math.random() * colors.length)]
     }));
     const t0 = Date.now();
@@ -1599,7 +1627,6 @@ class Game {
   }
 
   devPinOk(pin) {
-    // migrate legacy plaintext once, then forget it
     try {
       const legacy = store.get("spy_devpin");
       if (legacy) {
@@ -1612,7 +1639,6 @@ class Game {
   }
 
   checkDevMode() {
-    // No silent auto-enable: ?dev=PIN unlocks only when the PIN matches.
     const q = new URLSearchParams(location.search);
     const pin = q.get("dev") || q.get("debug");
     if (pin && this.devPinOk(pin)) {
@@ -1678,14 +1704,51 @@ class Game {
     const panel = this.$("dev-panel");
     const willShow = show === undefined ? panel.classList.contains("hidden") : !!show;
     panel.classList.toggle("hidden", !willShow);
-    if (willShow) this.updateDevPanel();
+    if (willShow) {
+      this.updateDevPanel();
+      this.startFpsMeter();
+    } else {
+      this.stopFpsMeter();
+    }
+  }
+
+  startFpsMeter() {
+    this.stopFpsMeter();
+    let frames = 0;
+    let last = performance.now();
+    const loop = (now) => {
+      if (!this.devMode || this.$("dev-panel").classList.contains("hidden")) {
+        this._fpsRAF = null;
+        return;
+      }
+      frames++;
+      if (now - last >= 500) {
+        const fps = Math.min(144, Math.round((frames * 1000) / (now - last)));
+        const el = this.$("dev-fps");
+        if (el) el.textContent = `${fps} fps`;
+        frames = 0;
+        last = now;
+      }
+      this._fpsRAF = requestAnimationFrame(loop);
+    };
+    this._fpsRAF = requestAnimationFrame(loop);
+  }
+
+  stopFpsMeter() {
+    if (this._fpsRAF) { try { cancelAnimationFrame(this._fpsRAF); } catch (e) {} }
+    this._fpsRAF = null;
   }
 
   startDevRefresh() {
     this.stopDevRefresh();
     this.devInterval = setInterval(() => { if (this.devMode) this.updateDevPanel(); }, 1000);
   }
-  stopDevRefresh() { if (this.devInterval) clearInterval(this.devInterval); this.devInterval = null; }
+
+  stopDevRefresh() {
+    if (this.devInterval) clearInterval(this.devInterval);
+    this.devInterval = null;
+    this.stopFpsMeter();
+  }
 
   updateDevPanel() {
     if (!this.devMode) return;
@@ -1725,7 +1788,7 @@ class Game {
 
   devRevealSpy() {
     if (this.isHost) {
-      const name = this.players.find(p => p.id === this.spyId)?.name || "unknown";
+      const name = this.spyIds.map(id => this.players.find(p => p.id === id)?.name || "unknown").join(", ") || "none";
       this.devLog(`Spy: ${name} | Location: ${this.location}`);
       this.toast(`Spy: ${name}`, "success");
     } else if (this.isSpy) {
@@ -1740,7 +1803,7 @@ class Game {
     if (this.phase !== "lobby") return this.devLog("Bots can only join in the lobby.");
     const n = this.players.length + 1;
     const id = `bot-${Math.random().toString(36).slice(2, 8)}`;
-    this.addPlayer({ id, name: `Bot ${n}`, isHost: false, score: 0, color: COLORS[this.players.length % COLORS.length], bot: true });
+    this.addPlayer({ id, name: `Bot ${n}`, isHost: false, score: 0, color: COLORS[this.players.length % COLORS.length], bot: true, avatar: av2FromSeed(id) });
     this.broadcast({ type: "players", players: this.players, category: this.category, mode: this.mode });
     this.devLog(`Added ${id}. Bots never vote — they are skipped in tally.`);
   }
@@ -1759,11 +1822,9 @@ class Game {
     this.devLog("State copied to clipboard.");
   }
 
-  // ---------- dev cheats (PIN-locked; host cheats are real, guest cheats are local spoofs) ----------
   devCheatTag() { return this.isHost ? "CHEAT" : "CHEAT (local only)"; }
 
   devBroadcastSpy(note) {
-    // host pushes new spy/location truth to the room (conscious cheat — everyone sees effects)
     this.broadcast({ type: "devSpy", spyIds: this.spyIds, location: this.location, round: this.round });
     this.devLog(`${note} [${this.devCheatTag()}] spy=${this.spyIds.join(",")} loc=${this.location}`);
   }
@@ -1835,7 +1896,9 @@ class Game {
   devUnspoof() {
     if (this._spoofPrev === undefined) return this.devLog("No spoof active.");
     if (!this.isHost) {
-      this.devLog("Guest truth lives on host — re-sync will restore your real view next heartbeat. Local flag cleared.");
+      this.isSpy = !!this._spoofPrev;
+      this.showRole(); this.updatePhaseUI();
+      this.devLog("Local spoof reverted.");
     } else {
       this.isSpy = this.spyIds.includes(this.myId);
       this.showRole(); this.updatePhaseUI(); this.renderPlayers();
@@ -1914,6 +1977,7 @@ class Game {
   devUnlockAll() {
     SHOP_ITEMS.forEach(it => { if (!this.owned.includes(it.id)) this.owned.push(it.id); });
     store.set("spy_owned", JSON.stringify(this.owned));
+    this.buildThemeOptions();
     this.playSound("success");
     this.toast("CHEAT: all shop items unlocked (local)", "success");
     this.devLog(`Owned: ${this.owned.join(",")}`);
@@ -1983,7 +2047,7 @@ class Game {
 
   realPlayers() { return this.players.filter(p => !p.bot); }
 
-  // ---------- networking ----------
+// ---------- networking ----------
   createRoom() {
     const name = this.$("player-name").value.trim().slice(0, 16);
     if (!name) return this.toast("Enter your name first", "error");
@@ -1996,6 +2060,7 @@ class Game {
 
     try { if (this.peer) this.peer.destroy(); } catch (e) {}
     this.connections.clear();
+    this.pendingPlayers.clear();
     try {
       this.peer = new Peer(this.peerIdFor(this.roomCode), { debug: 0, config: this.iceConfig() });
     } catch (e) {
@@ -2009,7 +2074,7 @@ class Game {
       this.myId = id;
       this._createTries = 0;
       this.players = [];
-      this.addPlayer({ id, name: this.myName, isHost: true, score: 0, color: COLORS[0], avatar: this.avatar });
+      this.addPlayer({ id, name: this.myName, isHost: true, score: 0, color: COLORS[0], avatar: this.avatar, voice: this.voiceOn });
       this.showHostLobby();
       this.setStatus(`Hosting · ${this.roomCode} · 1`, true);
       this.startSync();
@@ -2025,7 +2090,6 @@ class Game {
       console.error(err);
       this.$("create-btn").disabled = false;
       if (err && err.type === "unavailable-id") {
-        // code taken on the public cloud — drop the claimed peer, retry fresh (capped)
         this._createTries = (this._createTries || 0) + 1;
         if (this._createTries > 3) {
           this._createTries = 0;
@@ -2052,7 +2116,6 @@ class Game {
     const code = this.$("room-code").value.trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 5);
     if (!name) return this.toast("Enter your name first", "error");
     if (code.length !== 5) return this.toast("Room code is 5 letters", "error");
-    // Tapping Join while a join is in flight cancels it.
     if (this.joining) {
       this.joinAttempt = (this.joinAttempt || 0) + 1000;
       this.joining = false;
@@ -2072,20 +2135,19 @@ class Game {
     this.$("join-btn").disabled = true;
 
     const retry = (msg) => {
-      if (this.joinAttempt !== attempt) return; // superseded by newer attempt
+      if (this.joinAttempt !== attempt) return;
       if (attempt < MAX_ATTEMPTS) {
-        this.joining = false; // next attempt re-arms; a user tap now starts fresh instead of cancelling
+        this.joining = false;
         this.toast(`${msg} — retrying (${attempt + 1}/${MAX_ATTEMPTS})…`);
         setTimeout(() => { if (this.joinAttempt === attempt) this.joinRoom(attempt + 1); }, BACKOFF[attempt + 1] || 2000);
       } else {
         this.joining = false;
         this.$("join-btn").disabled = false;
         this.setStatus("Failed", false);
-        this.toast("Could not reach the room. Check the code, host tab open, same PeerJS cloud, or symmetric NAT (needs TURN relay).", "error");
+        this.toast("Could not reach the room. Check the code, host tab open, or TURN settings.", "error");
       }
     };
 
-    // Reuse a live peer so retries don't mint new IDs (ghost duplicates on host).
     let peer = this.peer;
     const peerUsable = peer && !peer.destroyed;
     if (!peerUsable) {
@@ -2102,21 +2164,19 @@ class Game {
       }
       this.peer = peer;
       this.peer.on("call", call => this.handleIncomingCall(call));
-      // guests heal signaling drops just like the host does
       this.peer.on("disconnected", () => { try { if (!this.peer.destroyed) this.peer.reconnect(); } catch (e) {} });
       this.peer.on("error", err => {
         if (this.joinAttempt !== attempt) return;
         console.error(err);
         clearTimeout(failTimer);
         const t = err && err.type;
-        // near-fatal ICE/socket errors hang to the 12s watchdog otherwise —
-        // fold them into the normal retry path with backoff
-        if (t === "peer-unavailable" || t === "network" || t === "socket-error" || t === "socket-closed" || t === "webrtc") retry(t === "peer-unavailable" ? "Room not found yet" : "Network hiccup");
-        else {
+        if (t === "peer-unavailable" || t === "network" || t === "socket-error" || t === "socket-closed" || t === "webrtc") {
+          retry(t === "peer-unavailable" ? "Room not found yet" : "Network hiccup");
+        } else {
           this.joining = false;
           this.$("join-btn").disabled = false;
           this.setStatus("Failed", false);
-          this.toast("Join failed. Check connection — carrier NAT may need a TURN relay (see bugs.md A1).", "error");
+          this.toast("Join failed. Check connection or configure TURN relay in Settings.", "error");
         }
       });
     }
@@ -2124,7 +2184,7 @@ class Game {
     let done = false;
     let joinTimerFired = false;
     const oneRetry = (msg) => {
-      if (joinTimerFired) return; // the two 12s watchdogs share one retry
+      if (joinTimerFired) return;
       joinTimerFired = true;
       retry(msg);
     };
@@ -2134,8 +2194,6 @@ class Game {
       if (this.joinAttempt !== attempt) { clearTimeout(failTimer); return; }
       this.myId = this.peer.id;
       if (!this.myId) { setTimeout(doConnect, 300); return; }
-      // tear down the live conn AND any in-flight dial before redialing —
-      // half-open duplicates each deliver join and double-count the roster
       try { const old = this.connections.get("host"); if (old) { try { old.close(); } catch (e) {} } } catch (e) {}
       try { if (this._pendingConn) { try { this._pendingConn.close(); } catch (e) {} } } catch (e) {}
       this._pendingConn = null;
@@ -2149,7 +2207,7 @@ class Game {
 
     if (peer.open) doConnect();
     else {
-      const onOpen = id => { try { peer.off("open", onOpen); } catch (e) {} doConnect(); };
+      const onOpen = () => { try { peer.off("open", onOpen); } catch (e) {} doConnect(); };
       peer.once("open", onOpen);
       setTimeout(() => { try { peer.off("open", onOpen); } catch (e) {} if (!done && this.joinAttempt === attempt && !peer.open) oneRetry("Signaling slow"); }, 12000);
     }
@@ -2159,17 +2217,14 @@ class Game {
     conn.on("open", () => {
       if (this.isHost) {
         this.connections.set(conn.peer, conn);
-        this.sendTo(conn, { type: "welcome", players: this.players, roomCode: this.roomCode, chat: this.chatHistory.slice(-40) });
+        this.sendTo(conn, { type: "welcome", players: this.players, roomCode: this.roomCode, chat: this.chatHistory.slice(-40), category: this.category, mode: this.mode });
         this.setStatus(`Hosting · ${this.roomCode} · ${this.players.length}`, true);
       } else {
         this.connections.set("host", conn);
         this.sendTo(conn, { type: "join", id: this.myId, name: this.myName, avatar: this.avatar });
         this.setStatus(`Connected · ${this.roomCode}`, true);
         this._lastSyncAt = Date.now();
-        // host-death detector: pagehide hostLeft can't flush on mobile, so a
-        // missed-heartbeat watchdog (2x the 3s interval + slack) tells guests
         this.startSyncWatch();
-        // flush anything queued while the channel was down
         this.flushOutbox();
       }
       if (onOpen) onOpen();
@@ -2179,6 +2234,35 @@ class Game {
     conn.on("data", data => this.onMessage(data, conn));
     conn.on("close", () => this.onDisconnect(conn));
     conn.on("error", e => console.warn("Conn error", e));
+  }
+
+  uniquePlayerName(rawName) {
+    let pname = String(rawName || "Player").trim().slice(0, 16) || "Player";
+    if (this.players.some(p => p.name.toLowerCase() === pname.toLowerCase())) {
+      let i = 2;
+      while (this.players.some(p => p.name.toLowerCase() === `${pname} ${i}`.toLowerCase())) i++;
+      pname = `${pname} ${i}`.slice(0, 16);
+    }
+    return pname;
+  }
+
+  flushPendingPlayers() {
+    if (!this.isHost || !this.pendingPlayers.size) return;
+    let added = false;
+    this.pendingPlayers.forEach((info, pid) => {
+      const conn = this.connections.get(pid);
+      if (!conn || !conn.open) return;
+      if (this.players.some(p => p.id === pid)) return;
+      const color = COLORS[this.players.length % COLORS.length];
+      const pname = this.uniquePlayerName(info.name);
+      this.addPlayer({ id: pid, name: pname, isHost: false, score: 0, color, avatar: this.sanitizeAvatar(info.avatar) });
+      added = true;
+    });
+    this.pendingPlayers.clear();
+    if (added) {
+      this.setStatus(`Hosting · ${this.roomCode} · ${this.players.length}`, true);
+      this.broadcast({ type: "players", players: this.players, category: this.category, mode: this.mode });
+    }
   }
 
   onMessage(data, conn) {
@@ -2191,34 +2275,36 @@ class Game {
     switch (data.type) {
       case "join": {
         if (!this.isHost) break;
-        if (this.phase !== "lobby") { try { conn.send({ type: "joinDenied", reason: "Game already started" }); } catch (e) {} break; }
-        if (this.players.find(p => p.id === data.id)) break; // retry with reused peer, already added
-        const color = COLORS[this.players.length % COLORS.length];
-        let pname = String(data.name || "Player").slice(0, 16);
-        // duplicate names make voting ambiguous — suffix them
-        if (this.players.some(p => p.name.toLowerCase() === pname.toLowerCase())) {
-          let i = 2;
-          while (this.players.some(p => p.name.toLowerCase() === `${pname} ${i}`.toLowerCase())) i++;
-          pname = `${pname} ${i}`.slice(0, 16);
+        const pid = (conn && conn.peer) || data.id;
+        if (!pid) break;
+        if (this.phase !== "lobby") {
+          this.pendingPlayers.set(pid, { id: pid, name: String(data.name || "Player").slice(0, 16), avatar: this.sanitizeAvatar(data.avatar) });
+          this.sendTo(conn, { type: "joinDenied", reason: "Round in progress — queued for next round", players: this.players, roomCode: this.roomCode, category: this.category, mode: this.mode });
+          break;
         }
-        this.addPlayer({ id: data.id, name: pname, isHost: false, score: 0, color, avatar: this.sanitizeAvatar(data.avatar) });
+        if (this.players.find(p => p.id === pid)) break;
+        const color = COLORS[this.players.length % COLORS.length];
+        const pname = this.uniquePlayerName(data.name);
+        this.addPlayer({ id: pid, name: pname, isHost: false, score: 0, color, avatar: this.sanitizeAvatar(data.avatar) });
+        this.setStatus(`Hosting · ${this.roomCode} · ${this.players.length}`, true);
         this.sendTo(conn, { type: "welcome", players: this.players, roomCode: this.roomCode, chat: this.chatHistory.slice(-40), category: this.category, mode: this.mode });
         this.broadcast({ type: "players", players: this.players, category: this.category, mode: this.mode });
         this.playSound("join");
-        // live voice room: call the newcomer so they hear us without toggling
         if (this.voiceOn) this.callAllPeers();
         break;
       }
       case "joinDenied":
-        this.toast(data.reason || "Could not join", "error");
-        this.setStatus("Denied", false);
-        // Mid-game join: no reload. Stay in lobby, flag waits for next round.
+        this.toast(data.reason || "Round in progress — waiting for next round", "info");
+        this.setStatus(`Queued · ${this.roomCode}`, true);
         this.waitingForNext = true;
+        if (Array.isArray(data.players)) this.players = data.players;
+        if (data.category) { this.category = data.category; this.setSelect(this.$("category-select"), data.category); }
+        if (data.mode) { this.mode = data.mode; this.setSelect(this.$("mode-select"), data.mode); }
         this.$("join-btn").disabled = false;
         this.showHostLobby();
         this.$("start-btn").style.display = "none";
         this.$("guest-wait").classList.remove("hidden");
-        this.$("guest-wait").innerHTML = `<i class="fa-solid fa-hourglass-half"></i> Game in progress — you join next round.`;
+        this.$("guest-wait").innerHTML = `<i class="fa-solid fa-hourglass-half"></i> Game in progress — you will join next round automatiquement.`;
         this.$("display-code").textContent = this.roomCode;
         this.updateStartButton();
         break;
@@ -2270,25 +2356,29 @@ class Game {
         if (this.voiceOn) this.callAllPeers();
         break;
       case "gameStart":
-        // personalized: { isSpy, location (null for spy), round, players }
         this.isSpy = !!data.isSpy;
         this.spyIds = data.spyIds || (data.isSpy ? [this.myId] : []);
         if (data.category && CATEGORIES[data.category]) { this.category = data.category; this.setSelect(this.$("category-select"), data.category); }
         if (data.mode && MODES[data.mode]) { this.mode = data.mode; this.setSelect(this.$("mode-select"), data.mode); }
         this.location = data.location || "";
-        this.spyId = null; // guests never learn it
+        this.spyId = null;
         this.round = data.round || 1;
         this.phase = "role";
         this.waitingForNext = false;
-        this.votes = {}; this.myVote = null; this.spyGuess = null;
+        this.votes = {};
+        this.myVote = null;
+        this.pendingVote = null;
+        this.spyGuess = null;
+        this.guessSubmitted = false;
         this.chatHistory = [];
         if (Array.isArray(data.players)) this.players = data.players;
+        this.hideResults();
+        this.hideVoteModal();
         this.showGame();
         this.showRole();
         this.updatePhaseUI();
         this.renderPlayers();
         this.playSound("round");
-        // host died in the 3.5s role window: ask for state instead of sitting stuck
         clearTimeout(this._roleFallback);
         this._roleFallback = setTimeout(() => {
           if (this.phase === "role" && !this.isHost) {
@@ -2296,7 +2386,6 @@ class Game {
             this.toast("Waiting for host…", "error");
           }
         }, 9000);
-        // guests wait — only the host advances the phase
         break;
       case "chat":
         this.addChatMessage(data.name, data.message, data.id === this.myId, data.time, data.id === "system");
@@ -2312,7 +2401,7 @@ class Game {
           this.updateTimer();
         } else if (typeof data.time === "number") { this.timeLeft = data.time; this.updateTimer(); }
         this.updatePhaseUI();
-        if (data.phase === "vote") { this.myVote = null; this.openVoteModal(); }
+        if (data.phase === "vote") { this.myVote = null; this.pendingVote = null; this.openVoteModal(); }
         if (data.phase === "spyguess" && this.isSpy) this.openGuessModal();
         if (data.phase === "discuss") this.addSystemMessage("Discussion started! Ask questions to find the spy.");
         if (data.phase === "vote") this.addSystemMessage("Voting time! Pick who you think the spy is.");
@@ -2341,7 +2430,6 @@ class Game {
         this.showResults(data);
         break;
       case "devSpy": {
-        // host cheat push: new spy/location truth. Guests apply what the host sent.
         if (this.isHost) break;
         this._spoofPrev = undefined;
         this.spyIds = Array.isArray(data.spyIds) ? data.spyIds : [];
@@ -2353,7 +2441,8 @@ class Game {
         this.toast(this.isSpy ? "Host made YOU the spy (dev cheat)" : "Host changed roles (dev cheat)");
         break;
       }
-      case "nextRound":        this.isSpy = !!data.isSpy;
+      case "nextRound":
+        this.isSpy = !!data.isSpy;
         this.spyIds = data.spyIds || [];
         if (data.category && CATEGORIES[data.category]) { this.category = data.category; this.setSelect(this.$("category-select"), data.category); }
         if (data.mode && MODES[data.mode]) { this.mode = data.mode; this.setSelect(this.$("mode-select"), data.mode); }
@@ -2362,9 +2451,15 @@ class Game {
         this.round = data.round;
         this.phase = "role";
         this.waitingForNext = false;
-        this.votes = {}; this.myVote = null; this.spyGuess = null;
+        this.votes = {};
+        this.myVote = null;
+        this.pendingVote = null;
+        this.spyGuess = null;
+        this.guessSubmitted = false;
         if (Array.isArray(data.players)) this.players = data.players;
         this.hideResults();
+        this.hideVoteModal();
+        this.showGame();
         this.showRole();
         this.updatePhaseUI();
         this.renderPlayers();
@@ -2378,25 +2473,35 @@ class Game {
         }, 9000);
         break;
       case "avatar": {
-        const p = this.players.find(x => x.id === data.id);
-        if (p) { p.avatar = data.avatar; if (data.name) p.name = String(data.name).slice(0, 16); this.renderPlayers(); }
-        if (this.isHost && conn) this.broadcastExcept(data, conn);
+        const senderId = (conn && this.isHost) ? conn.peer : data.id;
+        const p = this.players.find(x => x.id === senderId);
+        if (p) {
+          p.avatar = this.sanitizeAvatar(data.avatar);
+          if (data.name) p.name = String(data.name).trim().slice(0, 16) || p.name;
+          this.renderPlayers();
+        }
+        if (this.isHost && conn) {
+          this.broadcastExcept({ type: "avatar", id: senderId, avatar: p ? p.avatar : this.sanitizeAvatar(data.avatar), name: p ? p.name : "" }, conn);
+        }
         break;
       }
       case "gift":
         if (this.isHost) this.routeGift(data, conn);
         else if (data.to === this.myId) {
-          // guests only credit host-relayed gifts (host already validated);
-          // forged direct amounts outside 5..500 die here
           const amt = Number(data.amount);
           if (!Number.isInteger(amt) || amt < 5 || amt > 500) break;
-          this.earnCoins(amt); this.playSound("gift-receive"); this.addSystemMessage(`${String(data.fromName || "Someone").slice(0, 16)} sent you ${amt} coins!`); this.toast(`+${amt} coins from ${String(data.fromName || "Someone").slice(0, 16)}!`, "success");
+          const sender = String(data.fromName || "Someone").slice(0, 16);
+          this.earnCoins(amt);
+          this.playSound("gift-receive");
+          this.addSystemMessage(`${sender} sent you ${amt} coins!`);
+          this.toast(`+${amt} coins from ${sender}!`, "success");
         }
         break;
       case "voice-state": {
-        const p = this.players.find(x => x.id === data.id);
+        const senderId = (conn && this.isHost) ? conn.peer : data.id;
+        const p = this.players.find(x => x.id === senderId);
         if (p) { p.voice = !!data.on; this.renderPlayers(); }
-        if (this.isHost && conn) this.broadcastExcept(data, conn);
+        if (this.isHost && conn) this.broadcastExcept({ type: "voice-state", id: senderId, on: !!data.on }, conn);
         break;
       }
       case "sync":
@@ -2414,7 +2519,11 @@ class Game {
         clearTimeout(this.roleTimeout);
         this.phase = "lobby";
         this.round = 1;
-        this.votes = {}; this.myVote = null; this.spyGuess = null;
+        this.votes = {};
+        this.myVote = null;
+        this.pendingVote = null;
+        this.spyGuess = null;
+        this.guessSubmitted = false;
         this.chatHistory = [];
         this.waitingForNext = false;
         if (Array.isArray(data.players)) this.players = data.players;
@@ -2438,26 +2547,59 @@ class Game {
     if (this.devMode) this.updateDevPanel();
   }
 
+  handleAllSpiesLeft(leftName) {
+    if (!this.isHost) return;
+    clearInterval(this.timerInterval);
+    clearTimeout(this.roleTimeout);
+    this.phase = "reveal";
+    this.players.forEach(p => {
+      if (!p.bot) p.score = (p.score || 0) + 1;
+    });
+    const results = {
+      type: "results",
+      round: this.round,
+      isGuessUpdate: false,
+      spyIds: [],
+      spyId: null,
+      spyName: `${leftName || "Spy"} (disconnected)`,
+      location: this.location,
+      eliminated: [],
+      eliminatedNames: [`${leftName || "Spy"} (left)`],
+      spyCaught: true,
+      scores: this.players.map(p => ({ id: p.id, name: p.name, score: p.score || 0, color: p.color, avatar: p.avatar || null })),
+      allowGuess: false
+    };
+    this.broadcast(results);
+    this.hideVoteModal();
+    this.applyScores(results.scores);
+    this.showResults(results);
+  }
+
   onDisconnect(conn) {
-      if (this.isHost) {
-        const pid = conn.peer;
-        this.connections.delete(pid);
-        const vc = this.voiceCalls.get(pid);
-        if (vc) { try { vc.close(); } catch (e) {} this.voiceCalls.delete(pid); }
-        this.detachVoice(pid);
-        const left = this.players.find(p => p.id === pid);
-    this.players = this.players.filter(p => p.id !== pid);
-    delete this.votes[pid];
-    Object.keys(this.votes).forEach(voter => { if (this.votes[voter] === pid) delete this.votes[voter]; });
-    if (this.spyIds.includes(pid)) {
-      this.spyIds = this.spyIds.filter(id => id !== pid);
-      this.spyId = this.spyIds[0] || null;
-    }
-    this.broadcast({ type: "players", players: this.players });
-        this.renderPlayers();
-        this.setStatus(`Hosting · ${this.roomCode} · ${this.players.length}`, true);
-        if (left) { this.addSystemMessage(`${left.name} left the room.`); this.playSound("leave"); }
-      // if everyone voted already (minus leaver), close the vote
+    if (this.isHost) {
+      const pid = conn.peer;
+      this.connections.delete(pid);
+      this.pendingPlayers.delete(pid);
+      const vc = this.voiceCalls.get(pid);
+      if (vc) { try { vc.close(); } catch (e) {} this.voiceCalls.delete(pid); }
+      this.detachVoice(pid);
+      const left = this.players.find(p => p.id === pid);
+      this.players = this.players.filter(p => p.id !== pid);
+      delete this.votes[pid];
+      Object.keys(this.votes).forEach(voter => { if (this.votes[voter] === pid) delete this.votes[voter]; });
+      const wasSpy = this.spyIds.includes(pid);
+      if (wasSpy) {
+        this.spyIds = this.spyIds.filter(id => id !== pid);
+        this.spyId = this.spyIds[0] || null;
+      }
+      this.broadcast({ type: "players", players: this.players, category: this.category, mode: this.mode });
+      this.renderPlayers();
+      this.setStatus(`Hosting · ${this.roomCode} · ${this.players.length}`, true);
+      if (left) { this.addSystemMessage(`${left.name} left the room.`); this.playSound("leave"); }
+      if (wasSpy && this.spyIds.length === 0 && (this.phase === "role" || this.phase === "discuss" || this.phase === "vote")) {
+        this.handleAllSpiesLeft(left ? left.name : "Spy");
+        return;
+      }
       if (this.phase === "vote") { this.broadcastVoteCount(); this.maybeCloseVoting(); }
     } else {
       this.setStatus("Disconnected — tap Join Room to retry", false);
@@ -2482,8 +2624,6 @@ class Game {
   sendToHost(data) {
     const host = this.connections.get("host");
     if (host && host.open) { try { host.send(data); return; } catch (e) {} }
-    // channel down mid-reconnect: queue (cap 20) instead of silently dropping
-    // votes/guesses/chat — flushed on reconnect
     try {
       this._outbox = this._outbox || [];
       if (this._outbox.length < 20) this._outbox.push(data);
@@ -2541,7 +2681,6 @@ class Game {
 
   startSync() {
     this.stopSync();
-    // 3s heartbeat heals dropped phase/timer/roster messages on flaky mobile nets
     this.syncInterval = setInterval(() => {
       if (this.isHost && this.peer && !this.peer.destroyed) this.broadcast(this.syncPayload());
     }, 3000);
@@ -2549,8 +2688,6 @@ class Game {
 
   stopSync() { if (this.syncInterval) clearInterval(this.syncInterval); this.syncInterval = null; }
 
-  // wall-clock deadlines from the host: clamp so a skewed guest clock
-  // (minutes off) can't yield 0s skips or hour-long timers
   applyEndsAt(endsAt) {
     if (typeof endsAt !== "number" || !(endsAt > 0)) return false;
     this.endsAt = endsAt;
@@ -2561,8 +2698,6 @@ class Game {
 
   applySync(data) {
     if (this.isHost || !data) return;
-    // heartbeats can arrive reordered on flaky nets — stale sync must not
-    // regress a newer phase back to an older one
     if (typeof data.seq === "number") {
       if (typeof this._lastSyncSeq === "number" && data.seq <= this._lastSyncSeq) return;
       this._lastSyncSeq = data.seq;
@@ -2573,7 +2708,6 @@ class Game {
     if (data.category && CATEGORIES[data.category]) { this.category = data.category; this.setSelect(this.$("category-select"), data.category); }
     if (data.mode && MODES[data.mode]) { this.mode = data.mode; this.setSelect(this.$("mode-select"), data.mode); }
     if (Array.isArray(data.players)) this.players = data.players;
-    // guests who missed the start can't recover a role — wait for next round
     if (this.phase === "lobby" && data.phase && data.phase !== "lobby") {
       this.renderPlayers();
       return;
@@ -2584,15 +2718,13 @@ class Game {
       if (!this.applyEndsAt(data.endsAt) && typeof data.time === "number") { this.timeLeft = Math.min(600, Math.max(0, data.time)); this.updateTimer(); }
       this.updatePhaseUI();
       this.renderPlayers();
-      if (data.phase === "vote" && prev !== "vote") { this.myVote = null; this.openVoteModal(); }
+      if (data.phase === "vote" && prev !== "vote") { this.myVote = null; this.pendingVote = null; this.openVoteModal(); }
     } else if (this.phase !== "lobby") {
       this.applyEndsAt(data.endsAt);
       if (typeof data.endsAt !== "number" && typeof data.time === "number") {
         this.timeLeft = Math.min(600, Math.max(0, data.time));
         this.updateTimer();
       }
-      // backgrounded through the vote transition: phase already matches, so
-      // the branch above never fires — re-assert the ballot UI on return
       if (data.phase === "vote" && this.myVote == null && !this.waitingForNext
         && document.hidden === false && this.$("vote-modal").classList.contains("hidden")) {
         this.openVoteModal();
@@ -2609,10 +2741,19 @@ class Game {
     this.updateStartButton();
   }
 
+  syncLobbyPickLocks() {
+    const picks = this.$("lobby-picks");
+    if (picks) picks.classList.toggle("guest-locked", !this.isHost);
+    const cat = this.$("category-select"), mode = this.$("mode-select");
+    if (cat) cat.disabled = !this.isHost;
+    if (mode) mode.disabled = !this.isHost;
+  }
+
   showHostLobby() {
     this.$("join-section").classList.add("hidden");
     this.$("host-lobby").classList.remove("hidden");
     this.$("display-code").textContent = this.roomCode;
+    this.syncLobbyPickLocks();
     this.renderPlayers();
     this.updateStartButton();
   }
@@ -2635,7 +2776,7 @@ class Game {
   }
 
   renderPlayers() {
-    const sig = JSON.stringify([this.players, this.myId]);
+    const sig = JSON.stringify([this.players, this.myId, this.isHost]);
     if (sig === this._playersSig) { this.updateStartButton(); return; }
     this._playersSig = sig;
     const list = this.$("player-list");
@@ -2646,10 +2787,10 @@ class Game {
           <div style="min-width:0"><div class="pname">${this.escapeHtml(p.name)}${p.bot ? ' <span class="ptag">BOT</span>' : ""}${p.voice ? ' <i class="fa-solid fa-microphone" style="color:var(--success);font-size:0.7rem"></i>' : ""}</div>
           <div class="ptag">${p.isHost ? '<i class="fa-solid fa-crown crown"></i> host · ' : ""}${p.id === this.myId ? "you" : "player"}</div></div>
           <span class="pscore">${p.score || 0} pts</span>
-          ${p.id !== this.myId && !p.bot ? `<button class="gift-btn" data-gift="${this.escapeHtml(p.id)}" title="Send coins"><i class="fa-solid fa-gift"></i></button>` : ""}
-          ${this.isHost && p.id !== this.myId ? `<button class="kick-btn" data-kick="${this.escapeHtml(p.id)}" title="Remove ${this.escapeHtml(p.name)}"><i class="fa-solid fa-user-xmark"></i></button>` : ""}
+          ${p.id !== this.myId && !p.bot ? `<button type="button" class="gift-btn" data-gift="${this.escapeHtml(p.id)}" title="Send coins to ${this.escapeHtml(p.name)}" aria-label="Send coins to ${this.escapeHtml(p.name)}"><i class="fa-solid fa-gift"></i></button>` : ""}
+          ${this.isHost && p.id !== this.myId ? `<button type="button" class="kick-btn" data-kick="${this.escapeHtml(p.id)}" title="Remove ${this.escapeHtml(p.name)}" aria-label="Remove ${this.escapeHtml(p.name)}"><i class="fa-solid fa-user-xmark"></i></button>` : ""}
         </div>`).join("");
-      list.querySelectorAll("[data-gift]").forEach(b => { b.onclick = () => this.openGift(); });
+      list.querySelectorAll("[data-gift]").forEach(b => { b.onclick = () => this.openGift(b.dataset.gift); });
       list.querySelectorAll("[data-kick]").forEach(b => { b.onclick = () => this.kickPlayer(b.dataset.kick); });
     }
     const panel = this.$("players-panel");
@@ -2672,27 +2813,29 @@ class Game {
     if (conn) { try { conn.send({ type: "kicked", reason: "Host removed you from the room" }); } catch (e) {} }
     setTimeout(() => { try { conn && conn.close(); } catch (e) {} }, 400);
     this.connections.delete(pid);
+    this.pendingPlayers.delete(pid);
     const kvc = this.voiceCalls.get(pid);
     if (kvc) { try { kvc.close(); } catch (e) {} this.voiceCalls.delete(pid); }
     this.detachVoice(pid);
     this.players = this.players.filter(p => p.id !== pid);
-    // drop the leaver's ballot AND ballots cast for them, so voters aren't
-    // locked out of a tally that discards their vote
     delete this.votes[pid];
     Object.keys(this.votes).forEach(voter => { if (this.votes[voter] === pid) delete this.votes[voter]; });
-    // a kicked/left spy must not haunt the round — strip them from spyIds
-    // or the vote can never catch anyone and the round auto-escapes
-    if (this.spyIds.includes(pid)) {
+    const wasSpy = this.spyIds.includes(pid);
+    if (wasSpy) {
       this.spyIds = this.spyIds.filter(id => id !== pid);
       this.spyId = this.spyIds[0] || null;
       if (this.isHost && this.spyIds.includes(this.myId)) this.isSpy = true;
       else if (pid === this.myId) this.isSpy = false;
     }
-    this.broadcast({ type: "players", players: this.players });
+    this.broadcast({ type: "players", players: this.players, category: this.category, mode: this.mode });
     this.renderPlayers();
     this.setStatus(`Hosting · ${this.roomCode} · ${this.players.length}`, true);
     this.addSystemMessage(`${target.name} was removed by the host.`);
-        if (this.phase === "vote") { this.broadcastVoteCount(); this.maybeCloseVoting(); }
+    if (wasSpy && this.spyIds.length === 0 && (this.phase === "role" || this.phase === "discuss" || this.phase === "vote")) {
+      this.handleAllSpiesLeft(target.name);
+      return;
+    }
+    if (this.phase === "vote") { this.broadcastVoteCount(); this.maybeCloseVoting(); }
   }
 
   copyText(text, okMsg) {
@@ -2733,7 +2876,6 @@ class Game {
   leaveRoom() {
     if (this.isHost) {
       try { this.broadcast({ type: "hostLeft", scores: this.players.map(p => ({ id: p.id, name: p.name, score: p.score || 0 })) }); } catch (e) {}
-      // give the socket a beat to flush before destroy
       setTimeout(() => { try { if (this.peer) this.peer.destroy(); } catch (e) {} location.reload(); }, 350);
       try { if (this.localStream) this.localStream.getTracks().forEach(t => t.stop()); } catch (e) {}
       return;
@@ -2747,9 +2889,7 @@ class Game {
   pickNewRound() {
     const pool = this.poolFor(this.category);
     this.location = pool[Math.floor(Math.random() * pool.length)];
-    // bots never play the spy — they can't be voted, so a bot spy is an auto-escape
     const ids = this.players.filter(p => !p.bot).map(p => p.id);
-    // Fisher-Yates — uniform shuffle
     for (let i = ids.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [ids[i], ids[j]] = [ids[j], ids[i]];
@@ -2761,7 +2901,6 @@ class Game {
   }
 
   sendPersonalized(type) {
-    // host tells each connection only what they may know (anti-cheat)
     this.connections.forEach((conn, pid) => {
       const p = this.players.find(pl => pl.id === pid);
       if (!p) return;
@@ -2769,7 +2908,6 @@ class Game {
       this.sendTo(conn, {
         type,
         isSpy,
-        // co-spies learn each other (teammates only) — citizens get []
         spyIds: isSpy ? [...this.spyIds] : [],
         location: isSpy ? null : this.location,
         round: this.round,
@@ -2781,14 +2919,21 @@ class Game {
   }
 
   startGame() {
-    if (!this.isHost || this.realPlayers().length < MIN_PLAYERS) return;
+    if (!this.isHost) return;
+    this.flushPendingPlayers();
+    if (this.realPlayers().length < MIN_PLAYERS) return;
     if (this.mode === "double" && this.realPlayers().length < 6) return this.toast("Double Spy needs 6+ players", "error");
     this.round = 1;
+    this._rewardedRound = 0;
+    this._guessRewardedRound = 0;
     this.pickNewRound();
-    // host's own view
     this.isSpy = this.spyIds.includes(this.myId);
     this.phase = "role";
-    this.votes = {}; this.myVote = null; this.spyGuess = null;
+    this.votes = {};
+    this.myVote = null;
+    this.pendingVote = null;
+    this.spyGuess = null;
+    this.guessSubmitted = false;
     this.chatHistory = [];
     this.sendPersonalized("gameStart");
     this.showGame();
@@ -2811,6 +2956,7 @@ class Game {
 
   showRole() {
     const banner = this.$("role-banner");
+    const allyEl = this.$("role-ally");
     banner.classList.remove("deal");
     try { void banner.offsetWidth; } catch (e) {}
     banner.classList.add("deal");
@@ -2821,11 +2967,28 @@ class Game {
       this.$("location-display").textContent = "???";
       this.$("role-sub").textContent = `${pack} · ${modeName} — listen, blend in, then guess.`;
       banner.classList.add("spy");
+      const coSpies = (this.spyIds || [])
+        .filter(id => id !== this.myId)
+        .map(id => this.players.find(p => p.id === id)?.name)
+        .filter(Boolean);
+      if (allyEl) {
+        if (coSpies.length) {
+          allyEl.classList.remove("hidden");
+          allyEl.innerHTML = `<i class="fa-solid fa-user-ninja"></i> Co-Spy: <strong>${this.escapeHtml(coSpies.join(", "))}</strong>`;
+        } else {
+          allyEl.classList.add("hidden");
+          allyEl.innerHTML = "";
+        }
+      }
     } else {
       this.$("role-title").innerHTML = `<i class="fa-solid fa-user-shield"></i> You are a Citizen`;
       this.$("location-display").textContent = this.location || "???";
       this.$("role-sub").textContent = `${pack} · ${modeName} — blend in. Find the spy.`;
       banner.classList.remove("spy");
+      if (allyEl) {
+        allyEl.classList.add("hidden");
+        allyEl.innerHTML = "";
+      }
     }
     const allowGuess = !MODES[this.mode] || MODES[this.mode].guess !== false;
     const gb = this.$("guess-now-btn");
@@ -2833,7 +2996,6 @@ class Game {
   }
 
   startDiscussion() {
-    // role -> discuss only: a lobby discuss would run with no spies/location
     if (!this.isHost || this.phase !== "role") return;
     if (!this.spyIds.length || !this.location) return;
     this.phase = "discuss";
@@ -2851,6 +3013,7 @@ class Game {
     this.phase = "vote";
     this.votes = {};
     this.myVote = null;
+    this.pendingVote = null;
     this.endsAt = Date.now() + this.voteTime * 1000;
     this.broadcast({ type: "phase", phase: "vote", endsAt: this.endsAt });
     this.updatePhaseUI();
@@ -2866,22 +3029,22 @@ class Game {
     const options = this.$("vote-options");
     const others = this.players.filter(p => p.id !== this.myId && !p.bot);
     if (!others.length) return this.toast("Nobody to vote for", "error");
+    this.pendingVote = this.myVote;
     options.innerHTML = others.map(p => `
-      <div class="vote-option" data-id="${this.escapeHtml(p.id)}" tabindex="0" role="option" aria-selected="false" aria-label="Vote ${this.escapeHtml(p.name)}">
+      <div class="vote-option ${this.pendingVote === p.id ? "selected" : ""}" data-id="${this.escapeHtml(p.id)}" tabindex="0" role="option" aria-selected="${this.pendingVote === p.id ? "true" : "false"}" aria-label="Vote ${this.escapeHtml(p.name)}">
         ${this.avatarHtml(p, 30)}
         <span>${this.escapeHtml(p.name)}${p.bot ? " (bot)" : ""}</span>
       </div>`).join("") + `
-      <div class="vote-option skip" data-id="__skip" tabindex="0" role="option" aria-selected="false" aria-label="Skip vote">
+      <div class="vote-option skip ${this.pendingVote === "__skip" ? "selected" : ""}" data-id="__skip" tabindex="0" role="option" aria-selected="${this.pendingVote === "__skip" ? "true" : "false"}" aria-label="Skip vote">
         <i class="fa-solid fa-forward" style="color:var(--text-muted)"></i>
         <span>Skip — no vote</span>
       </div>`;
-    this.myVote = null;
-    this.$("confirm-vote").disabled = true;
+    this.$("confirm-vote").disabled = !this.pendingVote;
     const pick = (el) => {
       options.querySelectorAll(".vote-option").forEach(o => { o.classList.remove("selected"); o.setAttribute("aria-selected", "false"); });
       el.classList.add("selected");
       el.setAttribute("aria-selected", "true");
-      this.myVote = el.dataset.id;
+      this.pendingVote = el.dataset.id;
       this.$("confirm-vote").disabled = false;
     };
     options.querySelectorAll(".vote-option").forEach(el => {
@@ -2895,7 +3058,8 @@ class Game {
   hideVoteModal() { this.$("vote-modal").classList.add("hidden"); }
 
   submitVote() {
-    if (!this.myVote) return;
+    if (!this.pendingVote) return;
+    this.myVote = this.pendingVote;
     this.hideVoteModal();
     const skipped = this.myVote === "__skip";
     const payload = { type: "vote", id: this.myId, vote: this.myVote };
@@ -2908,7 +3072,6 @@ class Game {
   recordVote(data, conn) {
     if (this.phase !== "vote") return;
     if (!data || !data.id || !data.vote) return;
-    // guests vote as themselves only — a forged id from another player is dropped
     if (conn && conn.peer !== data.id) return;
     if (data.id === data.vote) return;
     const voter = this.players.find(p => p.id === data.id);
@@ -2949,6 +3112,7 @@ class Game {
     if (!this.isHost || this.phase !== "vote") return;
     clearInterval(this.timerInterval);
     this.phase = "reveal";
+    this.guessSubmitted = false;
 
     const tally = {};
     Object.values(this.votes).forEach(v => {
@@ -2958,8 +3122,6 @@ class Game {
     });
     const maxVotes = Math.max(0, ...Object.values(tally));
     const eliminated = maxVotes > 0 ? Object.keys(tally).filter(id => tally[id] === maxVotes) : [];
-    // One rule for all modes: caught only if someone was voted out and all of them are spies.
-    // Ties with a citizen in the mix let the spies survive.
     const spyCaught = eliminated.length > 0 && eliminated.every(id => this.spyIds.includes(id));
     this.playSound("vote-done");
 
@@ -2971,6 +3133,8 @@ class Game {
 
     const results = {
       type: "results",
+      round: this.round,
+      isGuessUpdate: false,
       spyIds: this.spyIds,
       spyId: this.spyId,
       spyName: this.spyIds.map(id => this.players.find(p => p.id === id)?.name || "???").join(", "),
@@ -3015,15 +3179,18 @@ class Game {
       <div class="reveal-line"><i class="fa-solid fa-location-dot"></i><span>Location: <strong>${this.escapeHtml(data.location || "?")}</strong></span></div>`;
     if (data.eliminatedNames && data.eliminatedNames.length) {
       html += `<div class="reveal-line"><i class="fa-solid fa-check-to-slot"></i><span>Voted out: <strong>${this.escapeHtml(data.eliminatedNames.join(", "))}</strong>${data.eliminatedNames.length > 1 ? " (tie — spy survives)" : ""}</span></div>`;
-    } else if (!data.guessCorrect) {
+    } else if (!data.isGuessUpdate) {
       html += `<div class="reveal-line"><i class="fa-solid fa-circle-info"></i><span>No majority — nobody eliminated.</span></div>`;
+    }
+    if (data.isGuessUpdate && data.guess) {
+      html += `<div class="reveal-line"><i class="fa-solid fa-compass"></i><span>Spy guessed: <strong>${this.escapeHtml(data.guess)}</strong> (${data.guessCorrect ? "Correct!" : "Wrong"})</span></div>`;
     }
     html += `<div style="margin-top:12px;font-weight:700">Scores</div>`;
     const sorted = [...(data.scores || [])].sort((a, b) => b.score - a.score);
     const top = Math.max(1, ...sorted.map(s => s.score || 0));
     html += sorted.map((s, i) => {
       const pl = this.players.find(x => x.id === s.id);
-      const av = pl ? this.avatarHtml(pl, 30) : `<span class="avatar" style="background:${this.escapeHtml(s.color || "#7c5cfc")}">${this.escapeHtml((s.name || "?")[0].toUpperCase())}</span>`;
+      const av = pl ? this.avatarHtml(pl, 30) : this.avatarHtml({ avatar: s.avatar, name: s.name, color: s.color }, 30);
       const pct = Math.max(4, Math.round(((s.score || 0) / top) * 100));
       return `
       <div class="score-row ${i === 0 ? "winner" : ""}">
@@ -3035,7 +3202,7 @@ class Game {
       </div>`;
     }).join("");
     if (data.guessCorrect) html += `<p class="bonus"><i class="fa-solid fa-star"></i> Spy guessed the location (+3)!</p>`;
-    if (data.allowGuess && this.isSpy) html += `<p class="bonus warn"><i class="fa-solid fa-lightbulb"></i> You escaped! Guess the location for +3.</p>`;
+    if (data.allowGuess && this.isSpy && !this.guessSubmitted) html += `<p class="bonus warn"><i class="fa-solid fa-lightbulb"></i> You escaped! Guess the location for +3.</p>`;
 
     content.innerHTML = html;
     this.$("results").classList.remove("hidden");
@@ -3049,38 +3216,57 @@ class Game {
     const egb = this.$("end-game-btn");
     egb.innerHTML = `<i class="fa-solid fa-flag-checkered"></i> End Game`;
     egb.onclick = () => this.endGame();
-    // coins + streak: correct voters earn, spies earn on escape/guess
-    const me = (data.scores || []).find(s => s.id === this.myId);
-    if (me) {
-      const myVoteHit = this.myVote && this.myVote !== "__skip" && (data.spyIds || []).includes(this.myVote);
-      let myGain = 0;
-      if (data.spyCaught) myGain = (!this.isSpy && myVoteHit) ? 1 : 0;
-      else if (data.guessCorrect && this.isSpy) myGain = 3;
-      else if (!data.spyCaught && !data.guessCorrect && this.isSpy) myGain = 2;
-      if (myGain > 0) this.earnCoins(myGain * 10 + (won ? 10 : 0));
-    }
-    // personal streak: spies win by escaping, citizens win by catching the
-    // spy without voting a fellow citizen. Skip/AFK earns nothing — you must
-    // have actually voted a spy to share the win.
+
+    const r = data.round || this.round;
     const myVoteHit = this.myVote && this.myVote !== "__skip" && (data.spyIds || []).includes(this.myVote);
     const votedCitizen = this.myVote && this.myVote !== "__skip" && !(data.spyIds || []).includes(this.myVote);
-    const wonRound = this.isSpy ? !data.spyCaught : (!!data.spyCaught && !!myVoteHit && !votedCitizen);
-    if (wonRound) {
-      this.streak++;
-      this.bestStreak = Math.max(this.bestStreak, this.streak);
-      store.set("spy_streak", String(this.streak));
-      store.set("spy_best", String(this.bestStreak));
-    } else { this.streak = 0; store.set("spy_streak", "0"); }
-    this.renderStreak();
-    this.stopMusic(true);
-    if (data.spyCaught) { this.playSound("win"); this.playWinPhrase(); this.launchConfetti(); }
-    else if (data.guessCorrect) { this.playSound("guess-right"); this.playWinPhrase(); this.launchConfetti(90); }
-    else { this.playSound("lose"); this.playLosePhrase(); if (!data.guessCorrect && data.guess) this.playSound("guess-wrong"); }
 
-    if (data.allowGuess && this.isSpy) setTimeout(() => this.openGuessModal(), 900);
+    // Base round rewards & win streak: evaluated ONCE per round (never repeated on guess update)
+    if (!data.isGuessUpdate && this._rewardedRound !== r) {
+      this._rewardedRound = r;
+      if (data.spyCaught) {
+        if (!this.isSpy && myVoteHit && !votedCitizen) this.earnCoins(20);
+      } else if (this.isSpy) {
+        this.earnCoins(20);
+      }
+      const wonRound = this.isSpy ? !data.spyCaught : (!!data.spyCaught && !!myVoteHit && !votedCitizen);
+      if (wonRound) {
+        this.streak++;
+        this.bestStreak = Math.max(this.bestStreak, this.streak);
+        store.set("spy_streak", String(this.streak));
+        store.set("spy_best", String(this.bestStreak));
+      } else {
+        this.streak = 0;
+        store.set("spy_streak", "0");
+      }
+      this.renderStreak();
+    } else if (data.isGuessUpdate && this._guessRewardedRound !== r) {
+      // Bonus spy location guess reward: evaluated at most ONCE per round
+      this._guessRewardedRound = r;
+      if (data.guessCorrect && this.isSpy && (!data.guesserId || data.guesserId === this.myId)) {
+        this.earnCoins(30);
+      }
+    }
+
+    this.stopMusic(true);
+    if (data.isGuessUpdate) {
+      if (data.guessCorrect) { this.playSound("guess-right"); this.playWinPhrase(); this.launchConfetti(90); }
+      else { this.playSound("guess-wrong"); }
+    } else if (data.spyCaught) {
+      this.playSound("win"); this.playWinPhrase(); this.launchConfetti();
+    } else {
+      this.playSound("lose"); this.playLosePhrase();
+    }
+
+    if (data.allowGuess && this.isSpy && !this.guessSubmitted) {
+      setTimeout(() => {
+        if (this.phase === "reveal" && this.isSpy && !this.guessSubmitted) this.openGuessModal();
+      }, 900);
+    }
   }
 
   openGuessModal() {
+    if (this.guessSubmitted) return;
     this.closeAllDropdowns();
     const modal = this.$("guess-modal");
     const options = this.$("guess-options");
@@ -3114,7 +3300,6 @@ class Game {
       el.style.display = hit ? "" : "none";
       if (hit) shown++;
     });
-    // screen readers hear the result count; empty filter is perceivable
     const box = this.$("guess-options");
     if (box) box.setAttribute("aria-label", `Guess the location (${shown} of ${total} shown)`);
     const search = this.$("guess-search");
@@ -3122,9 +3307,10 @@ class Game {
   }
 
   submitGuess() {
-    if (!this.spyGuess || !this.isSpy) return;
+    if (!this.spyGuess || !this.isSpy || this.guessSubmitted) return;
     if (MODES[this.mode] && MODES[this.mode].guess === false) return this.toast("Guessing is off in Hardcore mode", "error");
     if (this.phase !== "reveal") return this.toast("Guess opens after the vote", "error");
+    this.guessSubmitted = true;
     this.$("guess-modal").classList.add("hidden");
     const guess = this.spyGuess;
     this.spyGuess = null;
@@ -3134,22 +3320,24 @@ class Game {
   }
 
   resolveGuess(guess, conn, senderId) {
-    // host-authoritative: only a real spy's guess counts, only in reveal phase,
-    // and never in Hardcore (no-guess) mode
     if (this.phase !== "reveal") return;
+    if (this.guessSubmitted && conn) return;
     if (MODES[this.mode] && MODES[this.mode].guess === false) return;
     const spyConnId = conn ? conn.peer : this.myId;
-    if (conn && senderId && senderId !== conn.peer) return; // forged sender
-    if (conn && (!guess || typeof guess !== "string")) return;
+    if (conn && senderId && senderId !== conn.peer) return;
+    if (!guess || typeof guess !== "string") return;
     if (!this.spyIds.includes(spyConnId)) return;
+    this.guessSubmitted = true;
     const correct = guess === this.location;
     if (correct) {
-      // only the spy who actually guessed scores — co-spies don't ride along
       const guesser = this.players.find(p => p.id === spyConnId);
       if (guesser) guesser.score = (guesser.score || 0) + 3;
     }
     const results = {
       type: "results",
+      round: this.round,
+      isGuessUpdate: true,
+      guesserId: spyConnId,
       spyIds: this.spyIds,
       spyId: this.spyId,
       spyName: this.spyIds.map(id => this.players.find(p => p.id === id)?.name || "???").join(", "),
@@ -3170,17 +3358,21 @@ class Game {
 
   nextRound() {
     if (!this.isHost) return;
+    this.flushPendingPlayers();
     if (this.realPlayers().length < MIN_PLAYERS) return this.toast(`Need ${MIN_PLAYERS} players`, "error");
-    // players may have left since round 1 — re-check the Double-Spy gate
-    // instead of silently dealing a 1-spy round in double mode
     if (this.mode === "double" && this.realPlayers().length < 6) return this.toast("Double Spy needs 6+ players — switch mode or wait for more", "error");
     this.hideResults();
     this.round++;
     this.pickNewRound();
     this.isSpy = this.spyIds.includes(this.myId);
     this.phase = "role";
-    this.votes = {}; this.myVote = null; this.spyGuess = null;
+    this.votes = {};
+    this.myVote = null;
+    this.pendingVote = null;
+    this.spyGuess = null;
+    this.guessSubmitted = false;
     this.sendPersonalized("nextRound");
+    this.showGame();
     this.showRole();
     this.updatePhaseUI();
     this.renderPlayers();
@@ -3199,16 +3391,21 @@ class Game {
     this.showFinalScores({ scores });
   }
 
-  // ---------- rematch without reload: everyone back to the lobby, scores reset ----------
   toLobby() {
     if (!this.isHost) return;
     clearInterval(this.timerInterval);
     clearTimeout(this.roleTimeout);
+    this.flushPendingPlayers();
     this.phase = "lobby";
     this.round = 1;
-    this.votes = {}; this.myVote = null; this.spyGuess = null;
+    this._rewardedRound = 0;
+    this._guessRewardedRound = 0;
+    this.votes = {};
+    this.myVote = null;
+    this.pendingVote = null;
+    this.spyGuess = null;
+    this.guessSubmitted = false;
     this.chatHistory = [];
-    // clear round secrets so an ex-spy sees nothing stale in the lobby
     this.spyIds = []; this.spyId = null; this.isSpy = false; this.location = "";
     this.endsAt = 0; this.timeLeft = 0; this.roleEndsAt = 0;
     this.players.forEach(p => { p.score = 0; });
@@ -3223,13 +3420,13 @@ class Game {
   }
 
   showLobbyScreen() {
-    // a deferred SW update waits for a safe moment — lobby is that moment
     if (window._swUpdatePending) { try { window.location.reload(); return; } catch (e) {} }
     this.$("game").classList.remove("active");
     this.$("lobby").classList.add("active");
     this.$("join-section").classList.add("hidden");
     this.$("host-lobby").classList.remove("hidden");
     this.$("display-code").textContent = this.roomCode || "-----";
+    this.syncLobbyPickLocks();
     if (this.isHost) {
       this.$("start-btn").style.display = "";
       this.$("guest-wait").classList.add("hidden");
@@ -3254,7 +3451,7 @@ class Game {
     const finalTop = Math.max(1, ...(data.scores || []).map(s => s.score || 0));
     content.innerHTML = (data.scores || []).map((s, i) => `
       <div class="score-row ${i === 0 ? "winner" : ""}">
-        ${this.avatarHtml({ avatar: s.avatar, name: s.name }, 30)}
+        ${this.avatarHtml({ avatar: s.avatar, name: s.name, color: s.color }, 30)}
         <span class="sname">${i === 0 ? '<i class="fa-solid fa-trophy" style="color:var(--warning)"></i> ' : `#${i + 1} `}${this.escapeHtml(s.name)}
           <span class="xp-track"><span class="xp-fill" style="width:${Math.max(4, Math.round(((s.score || 0) / finalTop) * 100))}%"></span></span>
         </span>
@@ -3277,7 +3474,10 @@ class Game {
     this.playSound("win");
   }
 
-  hideResults() { this.$("results").classList.add("hidden"); }
+  hideResults() {
+    this.$("results").classList.add("hidden");
+    this.$("guess-modal").classList.add("hidden");
+  }
 
   // ---------- timer (host drives from endsAt — no drift in background tabs) ----------
   startTimer(seconds, onEnd) {
@@ -3287,12 +3487,8 @@ class Game {
     this.endsAt = Date.now() + seconds * 1000;
     this.updateTimer();
     this.timerInterval = setInterval(() => {
-      // recompute from the wall clock: throttled 1s ticks in hidden tabs
-      // fire onEnd at the right moment instead of drifting late
       this.timeLeft = Math.max(0, Math.ceil((this.endsAt - Date.now()) / 1000));
       this.updateTimer();
-      // guests already recompute from endsAt — refresh them every 5s, not
-      // every tick, to cut per-second room-wide spam
       if (this.timeLeft <= 0 || this.timeLeft % 5 === 0) {
         this.broadcast({ type: "timer", time: this.timeLeft, endsAt: this.endsAt });
       }
@@ -3316,7 +3512,6 @@ class Game {
   }
 
   updatePhaseUI() {
-    // cached nodes + change guard: no full innerHTML churn per call
     const sig = `${this.phase}|${this.round}`;
     if (sig !== this._phaseSig) {
       this._phaseSig = sig;
@@ -3365,7 +3560,6 @@ class Game {
   renderLobbyChat() {
     const box = this.$("lobby-chat-messages");
     if (!box) return;
-    // same near-bottom guard as the game chat — no forced scroll-jump
     const nearBottom = (box.scrollHeight - box.scrollTop - box.clientHeight) < 80;
     box.innerHTML = this.chatHistory.slice(-30).map(m => {
       if (m.sys) return `<div class="chat-msg sys"><i class="fa-solid fa-circle-info"></i> ${this.escapeHtml(m.message)}</div>`;
@@ -3376,12 +3570,13 @@ class Game {
     }).join("");
     if (nearBottom) box.scrollTop = box.scrollHeight;
   }
+
   sendChat(text) {
     const input = this.$("chat-input");
     const msg = (typeof text === "string" ? text : input.value).trim().slice(0, 180);
     if (!msg) return;
     if (!this.myId && !this.isHost) return this.toast("Not connected yet", "error");
-    input.value = "";
+    if (typeof text !== "string") input.value = "";
     const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     const msgId = `${this.myId || "host"}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const payload = { type: "chat", id: this.myId, name: this.myName, message: msg, time, msgId };
@@ -3405,7 +3600,6 @@ class Game {
     const entry = { name: String(name || "?").slice(0, 16), message: String(message || "").slice(0, 180), isOwn: !!isOwn, time: time || "", sys: !!isSys };
     this.chatHistory.push(entry);
     if (this.chatHistory.length > 120) this.chatHistory.shift();
-    // fast path: append one node instead of rebuilding all 120 rows
     const container = this.$("chat-messages");
     if (container && container.children.length) {
       const nearBottom = (container.scrollHeight - container.scrollTop - container.clientHeight) < 80;
@@ -3438,15 +3632,9 @@ class Game {
 
 window.addEventListener("load", () => {
   window.game = new Game();
-  // offline shell: production only. On local dev the SW cache is what made
-  // a stopped server still load the game, so skip registration there and
-  // purge any SW + spy-* cache left over from earlier testing.
-  // Bypass also works anywhere with ?nosw=1.
   try {
     const qs = new URLSearchParams(location.search);
     const host = location.hostname || "";
-    // dev = loopback + LAN test nets + single-label names: none of these is
-    // the production host, and all reproduce the stopped-server ghost load
     const isLocalDev = host === "localhost" || host === "127.0.0.1" || host === "::1"
       || host === "0.0.0.0" || host === "[::1]"
       || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".test")
@@ -3471,8 +3659,6 @@ window.addEventListener("load", () => {
     }
     if ("serviceWorker" in navigator && /^https?:$/.test(location.protocol)) {
       navigator.serviceWorker.register("sw.js").then(reg => {
-        // A new SW means new ?v= assets: take over at once so the old
-        // cached script.js can't keep running after a deploy.
         try {
           if (reg.waiting) reg.waiting.postMessage({ type: "SKIP_WAITING" });
           reg.addEventListener("updatefound", () => {
@@ -3486,8 +3672,6 @@ window.addEventListener("load", () => {
           });
         } catch (e) {}
       }).catch(() => {});
-      // New SW took over — reload once, but never mid-room: a deploy that
-      // activates mid-discuss/vote would wipe the live P2P room.
       try {
         let reloaded = false;
         navigator.serviceWorker.addEventListener("controllerchange", () => {

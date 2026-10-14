@@ -7,10 +7,10 @@ const path = require("path");
 const zlib = require("zlib");
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
-const ROOT = __dirname;
+const ROOT = path.resolve(__dirname);
 // Bump APP_VERSION on every release and keep index.html asset URLs in sync
 // (styles.css?v=N, script.js?v=N) so phones never run stale cached files.
-const APP_VERSION = "15";
+const APP_VERSION = "16";
 
 const TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -34,21 +34,17 @@ const GZIP_RE = /\.(html|css|js|json|svg|txt|webmanifest)$/;
 
 function cacheControl(file, versioned) {
   if (/sw\.js$/.test(file)) return "no-cache, must-revalidate";
-  // year-long immutable is only safe for fingerprinted URLs — an unversioned
-  // wav at the same path would pin stale audio for a year
   if (/\.(woff2?|ttf|png|ico)$/.test(file)) return "public, max-age=31536000, immutable";
   if (/\.(wav|mp3|ogg)$/.test(file)) return versioned ? "public, max-age=31536000, immutable" : "public, max-age=3600";
-  // versioned (?v=N)CSS/JS are unique per release — cache hard, they can't go stale
   if (versioned && /\.(css|js|json|svg)$/.test(file)) return "public, max-age=31536000, immutable";
   if (/\.(css|js)$/.test(file)) return "public, max-age=3600";
-  // HTML entry point must revalidate every load so updates reach phones
   if (/\.html$/.test(file)) return "no-cache, must-revalidate";
   return "public, max-age=0, must-revalidate";
 }
 
 function send(req, res, filePath, stats, versioned) {
   const ext = path.extname(filePath).toLowerCase();
-  const etag = `"${stats.size.toString(36)}-${stats.mtimeMs.toString(36)}"`;
+  const etag = `"${stats.size.toString(36)}-${Math.trunc(stats.mtimeMs).toString(36)}"`;
   if (req.headers["if-none-match"] === etag) {
     res.writeHead(304);
     res.end();
@@ -75,32 +71,57 @@ function send(req, res, filePath, stats, versioned) {
     headers["Content-Encoding"] = "gzip";
     res.writeHead(200, headers);
     const src = fs.createReadStream(filePath);
+    const gz = zlib.createGzip();
     src.on("error", () => { try { if (!res.headersSent) res.writeHead(500); res.end(); } catch (e) {} });
-    src.pipe(zlib.createGzip()).on("error", () => { try { res.end(); } catch (e) {} }).pipe(res);
+    gz.on("error", () => { try { res.end(); } catch (e) {} });
+    res.on("close", () => { try { src.destroy(); gz.destroy(); } catch (e) {} });
+    src.pipe(gz).pipe(res);
   } else {
     headers["Content-Length"] = stats.size;
     res.writeHead(200, headers);
     const src = fs.createReadStream(filePath);
     src.on("error", () => { try { if (!res.headersSent) res.writeHead(500); res.end(); } catch (e) {} });
+    res.on("close", () => { try { src.destroy(); } catch (e) {} });
     src.pipe(res);
   }
 }
 
 const server = http.createServer((req, res) => {
   try {
-    const qi = req.url.indexOf("?");
-    const urlPath = decodeURIComponent(qi >= 0 ? req.url.slice(0, qi) : req.url);
-    // accept ?v=N among any other params (?v=15&x=1 still counts as versioned)
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      res.writeHead(405, { "Content-Type": "text/plain" });
+      res.end("method not allowed");
+      return;
+    }
+
+    const rawUrl = req.url || "/";
+    const qi = rawUrl.indexOf("?");
+    let urlPath;
+    try {
+      urlPath = decodeURIComponent(qi >= 0 ? rawUrl.slice(0, qi) : rawUrl);
+    } catch (e) {
+      res.writeHead(400, { "Content-Type": "text/plain" });
+      res.end("bad request");
+      return;
+    }
+
+    if (urlPath.includes("\0")) {
+      res.writeHead(400, { "Content-Type": "text/plain" });
+      res.end("bad request");
+      return;
+    }
+
     let versioned = false;
     if (qi >= 0) {
       try {
-        versioned = new URLSearchParams(req.url.slice(qi + 1)).get("v") === APP_VERSION;
+        versioned = new URLSearchParams(rawUrl.slice(qi + 1)).get("v") === APP_VERSION;
       } catch (e) { versioned = false; }
     }
-    // resolve inside ROOT; blocks "../" escapes
-    let filePath = path.normalize(path.join(ROOT, urlPath === "/" ? "index.html" : urlPath.slice(1)));
-    if (!filePath.startsWith(ROOT)) {
-      res.writeHead(403);
+
+    const relPath = urlPath === "/" ? "index.html" : urlPath.replace(/^\/+/, "");
+    let filePath = path.resolve(ROOT, relPath);
+    if (filePath !== ROOT && !filePath.startsWith(ROOT + path.sep)) {
+      res.writeHead(403, { "Content-Type": "text/plain" });
       res.end("forbidden");
       return;
     }
@@ -118,7 +139,7 @@ const server = http.createServer((req, res) => {
     });
   } catch (e) {
     try {
-      if (!res.headersSent) res.writeHead(500);
+      if (!res.headersSent) res.writeHead(500, { "Content-Type": "text/plain" });
       res.end("error");
     } catch (e2) { try { res.end(); } catch (e3) {} }
   }

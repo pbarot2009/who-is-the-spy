@@ -1,10 +1,8 @@
 // Who is the Spy? — offline shell cache. Bump CACHE on every release.
-const CACHE = "spy-v15";
-const SHELL = ["./", "styles.css?v=15", "script.js?v=15", "manifest.webmanifest", "assets/lobby-loop.wav?v=15"];
+const CACHE = "spy-v16";
+const SHELL = ["./", "index.html", "styles.css?v=16", "script.js?v=16", "manifest.webmanifest", "assets/lobby-loop.wav?v=16"];
 
 self.addEventListener("install", e => {
-  // one bad file (offline wav, 404) must not kill the whole install —
-  // cache each shell file on its own so skipWaiting still runs
   e.waitUntil(
     caches.open(CACHE)
       .then(c => Promise.all(SHELL.map(u => c.add(u).catch(() => {}))))
@@ -22,7 +20,6 @@ self.addEventListener("message", e => {
 self.addEventListener("activate", e => {
   e.waitUntil(
     caches.keys()
-      // only our own old shells — never wipe other apps on this origin
       .then(keys => Promise.all(keys.filter(k => k !== CACHE && k.indexOf("spy-") === 0).map(k => caches.delete(k))))
       .then(() => self.clients.claim())
   );
@@ -35,10 +32,7 @@ function isEntryRequest(url) {
 self.addEventListener("fetch", e => {
   const url = new URL(e.request.url);
   if (e.request.method !== "GET" || url.origin !== location.origin) return;
-  // Entry HTML must revalidate every load (matches server no-cache) —
-  // cache-first here would pin stale index.html behind a new deploy.
   if (isEntryRequest(url)) {
-    // one canonical key: /?room=ABCDE invites must not each store a dupe
     const key = new Request("index.html");
     e.respondWith(
       fetch(e.request).then(res => {
@@ -48,6 +42,23 @@ self.addEventListener("fetch", e => {
         }
         return res;
       }).catch(() => caches.match(key).then(hit => hit || new Response("offline", { status: 503, statusText: "offline" })))
+    );
+    return;
+  }
+  // Immutable versioned asset requests (?v=N) get served cache-first directly
+  const isVersionedAsset = url.searchParams.has("v") || /\.(woff2?|ttf|png|ico)$/.test(url.pathname);
+  if (isVersionedAsset) {
+    e.respondWith(
+      caches.match(e.request, { ignoreSearch: false }).then(hit => {
+        if (hit) return hit;
+        return fetch(e.request).then(res => {
+          if (res && res.ok) {
+            const copy = res.clone();
+            caches.open(CACHE).then(c => c.put(e.request, copy)).catch(() => {});
+          }
+          return res;
+        }).catch(() => new Response("offline", { status: 503, statusText: "offline" }));
+      })
     );
     return;
   }

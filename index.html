@@ -1,48 +1,58 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Who is the Spy? — Party Game for 3–8 Friends</title>
-  <meta name="description" content="Who is the Spy? A free mobile-first party game for 3–8 friends. No signup, no backend. Create a room, share the code, find the spy.">
+  <meta name="description"
+    content="Who is the Spy? A free mobile-first party game for 3–8 friends. No signup, no backend. Create a room, share the code, find the spy.">
   <meta name="theme-color" content="#0f0f13" id="meta-theme">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta property="og:title" content="Who is the Spy?">
-  <meta property="og:description" content="Find the spy before they find the location. Free browser party game for 3–8 players.">
+  <meta property="og:description"
+    content="Find the spy before they find the location. Free browser party game for 3–8 players.">
   <meta property="og:type" content="website">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='112' fill='%237c5cfc'/%3E%3Ctext x='256' y='350' font-size='260' text-anchor='middle' fill='white' font-family='sans-serif' font-weight='bold'%3E%3F%3C/text%3E%3C/svg%3E">
+  <link rel="icon"
+    href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='112' fill='%237c5cfc'/%3E%3Ctext x='256' y='350' font-size='260' text-anchor='middle' fill='white' font-family='sans-serif' font-weight='bold'%3E%3F%3C/text%3E%3C/svg%3E">
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="styles.css?v=15">
+  <link rel="stylesheet" href="styles.css?v=16">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
   <link rel="preconnect" href="https://unpkg.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&family=Sora:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&family=Sora:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap"
+    rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 </head>
+
 <body>
   <div id="app">
     <!-- Top bar -->
     <div class="top-bar">
-      <button id="settings-btn" class="icon-btn" title="Settings" aria-label="Open settings">
+      <button type="button" id="settings-btn" class="icon-btn" title="Settings" aria-label="Open settings">
         <i class="fa-solid fa-gear"></i>
       </button>
       <div class="top-center">
         <div id="connection-status" class="status offline" role="status" aria-live="polite">
           <span class="dot"></span><span id="status-text">Offline</span>
         </div>
-        <button id="wallet-pill" class="wallet-pill" title="Coins and shop" aria-label="Coins and shop">
+        <button type="button" id="wallet-pill" class="wallet-pill" title="Coins and shop" aria-label="Coins and shop">
           <i class="fa-solid fa-coins"></i> <span id="coin-balance">100</span>
         </button>
-        <span id="streak-chip" class="hud-chip streak hidden" title="Win streak"><i class="fa-solid fa-fire"></i> <span id="streak-count">0</span></span>
+        <span id="streak-chip" class="hud-chip streak hidden" title="Win streak">
+          <i class="fa-solid fa-fire"></i> <span id="streak-count">0</span>
+        </span>
       </div>
       <div class="top-right">
-        <button id="avatar-btn" class="icon-btn" title="Avatar" aria-label="Edit avatar">
+        <button type="button" id="avatar-btn" class="icon-btn" title="Avatar" aria-label="Edit avatar">
           <i class="fa-solid fa-face-smile"></i>
         </button>
-        <button id="dev-toggle" class="icon-btn hidden" title="Developer panel" aria-label="Open developer panel">
+        <button type="button" id="dev-toggle" class="icon-btn hidden" title="Developer panel"
+          aria-label="Open developer panel">
           <i class="fa-solid fa-bug"></i>
         </button>
       </div>
@@ -54,33 +64,36 @@
         <div class="hero">
           <div class="mascot" aria-hidden="true">
             <svg viewBox="0 0 200 178">
-              <ellipse cx="100" cy="164" rx="54" ry="10" fill="#000" opacity="0.18"/>
-              <path d="M52 132q-14 4-18 18l12 4q6-10 12-12z" style="fill:var(--primary)"/>
-              <circle cx="148" cy="140" r="16" fill="none" stroke="#8a6d3b" stroke-width="7"/>
-              <line x1="160" y1="152" x2="174" y2="166" stroke="#8a6d3b" stroke-width="9" stroke-linecap="round"/>
-              <ellipse cx="100" cy="112" rx="46" ry="52" style="fill:var(--primary)"/>
-              <ellipse cx="100" cy="126" rx="28" ry="34" fill="#fff" opacity="0.22"/>
-              <path d="M58 74L50 44l24 10z" fill="#2b2b3a"/>
-              <path d="M142 74l8-30-24 10z" fill="#2b2b3a"/>
-              <circle cx="82" cy="96" r="17" fill="#fff"/>
-              <circle cx="118" cy="96" r="17" fill="#fff"/>
-              <circle cx="84" cy="98" r="7" fill="#2b2b3a"/>
-              <circle cx="116" cy="98" r="7" fill="#2b2b3a"/>
-              <circle cx="86" cy="96" r="2.4" fill="#fff"/>
-              <circle cx="118" cy="96" r="2.4" fill="#fff"/>
-              <rect x="76" y="88" width="48" height="9" rx="4.5" fill="#2b2b3a" opacity="0.9"/>
-              <path d="M93 112l7 7 7-7z" fill="#ff9600"/>
-              <path d="M88 130q12 8 24 0" stroke="#2b2b3a" stroke-width="4" fill="none" stroke-linecap="round"/>
-              <ellipse cx="100" cy="40" rx="58" ry="10" fill="#2b2b3a"/>
-              <path d="M66 40q0-28 34-28t34 28z" fill="#2b2b3a"/>
-              <rect x="66" y="29" width="68" height="10" fill="#e11d48"/>
-              <ellipse cx="82" cy="160" rx="13" ry="7" fill="#2b2b3a"/>
-              <ellipse cx="118" cy="160" rx="13" ry="7" fill="#2b2b3a"/>
-              <text x="158" y="46" font-size="26" font-weight="800" style="fill:var(--warning)" font-family="sans-serif">?</text>
-              <text x="26" y="60" font-size="20" font-weight="800" style="fill:var(--primary)" font-family="sans-serif">?</text>
+              <ellipse cx="100" cy="164" rx="54" ry="10" fill="#000" opacity="0.18" />
+              <path d="M52 132q-14 4-18 18l12 4q6-10 12-12z" style="fill:var(--primary)" />
+              <circle cx="148" cy="140" r="16" fill="none" stroke="#8a6d3b" stroke-width="7" />
+              <line x1="160" y1="152" x2="174" y2="166" stroke="#8a6d3b" stroke-width="9" stroke-linecap="round" />
+              <ellipse cx="100" cy="112" rx="46" ry="52" style="fill:var(--primary)" />
+              <ellipse cx="100" cy="126" rx="28" ry="34" fill="#fff" opacity="0.22" />
+              <path d="M58 74L50 44l24 10z" fill="#2b2b3a" />
+              <path d="M142 74l8-30-24 10z" fill="#2b2b3a" />
+              <circle cx="82" cy="96" r="17" fill="#fff" />
+              <circle cx="118" cy="96" r="17" fill="#fff" />
+              <circle cx="84" cy="98" r="7" fill="#2b2b3a" />
+              <circle cx="116" cy="98" r="7" fill="#2b2b3a" />
+              <circle cx="86" cy="96" r="2.4" fill="#fff" />
+              <circle cx="118" cy="96" r="2.4" fill="#fff" />
+              <rect x="76" y="88" width="48" height="9" rx="4.5" fill="#2b2b3a" opacity="0.9" />
+              <path d="M93 112l7 7 7-7z" fill="#ff9600" />
+              <path d="M88 130q12 8 24 0" stroke="#2b2b3a" stroke-width="4" fill="none" stroke-linecap="round" />
+              <ellipse cx="100" cy="40" rx="58" ry="10" fill="#2b2b3a" />
+              <path d="M66 40q0-28 34-28t34 28z" fill="#2b2b3a" />
+              <rect x="66" y="29" width="68" height="10" fill="#e11d48" />
+              <ellipse cx="82" cy="160" rx="13" ry="7" fill="#2b2b3a" />
+              <ellipse cx="118" cy="160" rx="13" ry="7" fill="#2b2b3a" />
+              <text x="158" y="46" font-size="26" font-weight="800" style="fill:var(--warning)"
+                font-family="sans-serif">?</text>
+              <text x="26" y="60" font-size="20" font-weight="800" style="fill:var(--primary)"
+                font-family="sans-serif">?</text>
             </svg>
           </div>
-          <h1 id="game-title" title="Long-press, triple-click, or Alt+D for dev mode">Who is the <span class="accent">Spy?</span></h1>
+          <h1 id="game-title" title="Long-press, triple-click, or Alt+D for dev mode">Who is the <span
+              class="accent">Spy?</span></h1>
           <p class="subtitle">Everyone knows the location — except the spy.</p>
           <div class="hero-badges">
             <span class="pill-badge"><i class="fa-solid fa-users"></i> 3–8 friends</span>
@@ -93,12 +106,16 @@
           <div id="join-section">
             <h2 class="menu-title">Start a party</h2>
             <label class="field-label" for="player-name"><i class="fa-solid fa-user"></i> Your name</label>
-            <input type="text" id="player-name" placeholder="e.g. Alex" maxlength="16" autocomplete="nickname" enterkeyhint="next">
+            <input type="text" id="player-name" placeholder="e.g. Alex" maxlength="16" autocomplete="nickname"
+              enterkeyhint="next">
             <label class="field-label" for="room-code"><i class="fa-solid fa-key"></i> Room code</label>
-            <input type="text" id="room-code" class="code-input" placeholder="ABCDE" maxlength="5" autocomplete="off" autocapitalize="characters" spellcheck="false" enterkeyhint="go">
-            <button id="join-btn" class="btn primary"><i class="fa-solid fa-right-to-bracket"></i> Join Room</button>
+            <input type="text" id="room-code" class="code-input" placeholder="ABCDE" maxlength="5" autocomplete="off"
+              autocapitalize="characters" spellcheck="false" enterkeyhint="go">
+            <button type="button" id="join-btn" class="btn primary"><i class="fa-solid fa-right-to-bracket"></i> Join
+              Room</button>
             <div class="divider">or</div>
-            <button id="create-btn" class="btn secondary"><i class="fa-solid fa-plus"></i> Create New Room</button>
+            <button type="button" id="create-btn" class="btn secondary"><i class="fa-solid fa-plus"></i> Create New
+              Room</button>
           </div>
 
           <div id="host-lobby" class="hidden">
@@ -108,8 +125,9 @@
                 <strong id="display-code">-----</strong>
               </div>
               <div class="room-btns">
-                <button id="share-code" class="btn small ghost" title="Share invite" aria-label="Share invite"><i class="fa-solid fa-share-nodes"></i></button>
-                <button id="copy-code" class="btn small"><i class="fa-solid fa-copy"></i> Copy</button>
+                <button type="button" id="share-code" class="btn small ghost" title="Share invite"
+                  aria-label="Share invite"><i class="fa-solid fa-share-nodes"></i></button>
+                <button type="button" id="copy-code" class="btn small"><i class="fa-solid fa-copy"></i> Copy</button>
               </div>
             </div>
             <div class="lobby-meta">
@@ -120,11 +138,13 @@
             <div class="lobby-chat">
               <div class="chat-messages small" id="lobby-chat-messages" aria-live="polite"></div>
               <div class="chat-input">
-                <input type="text" id="lobby-chat-input" placeholder="Say hi to the room…" maxlength="180" autocomplete="off" enterkeyhint="send">
-                <button id="lobby-send-btn" aria-label="Send lobby message"><i class="fa-solid fa-paper-plane"></i></button>
+                <input type="text" id="lobby-chat-input" placeholder="Say hi to the room…" maxlength="180"
+                  autocomplete="off" enterkeyhint="send">
+                <button type="button" id="lobby-send-btn" aria-label="Send lobby message"><i
+                    class="fa-solid fa-paper-plane"></i></button>
               </div>
             </div>
-            <div class="lobby-picks">
+            <div class="lobby-picks" id="lobby-picks">
               <div class="pick">
                 <label for="category-select"><i class="fa-solid fa-layer-group"></i> Pack</label>
                 <select id="category-select"></select>
@@ -134,22 +154,34 @@
                 <select id="mode-select"></select>
               </div>
             </div>
-            <div id="streak-line" class="streak-line hidden"><i class="fa-solid fa-fire"></i> <span id="streak-text"></span></div>
-            <button id="start-btn" class="btn primary" disabled><i class="fa-solid fa-play"></i> Start Game</button>
+            <div id="streak-line" class="streak-line hidden"><i class="fa-solid fa-fire"></i> <span
+                id="streak-text"></span></div>
+            <button type="button" id="start-btn" class="btn primary" disabled><i class="fa-solid fa-play"></i> Start
+              Game</button>
             <div class="lobby-actions">
-              <button id="leave-btn" class="btn secondary small"><i class="fa-solid fa-door-open"></i> Leave</button>
+              <button type="button" id="leave-btn" class="btn secondary small"><i class="fa-solid fa-door-open"></i>
+                Leave</button>
             </div>
-            <p id="guest-wait" class="hint hidden"><i class="fa-solid fa-hourglass-half"></i> Waiting for the host to start…</p>
+            <p id="guest-wait" class="hint hidden"><i class="fa-solid fa-hourglass-half"></i> Waiting for the host to
+              start…</p>
           </div>
         </div>
 
         <details class="card how-card">
           <summary><i class="fa-solid fa-circle-question"></i> How to play</summary>
           <ol class="how-list">
-            <li><i class="fa-solid fa-ticket"></i><div><strong>Create &amp; share</strong><span>Host makes a room, friends join with the code.</span></div></li>
-            <li><i class="fa-solid fa-comments"></i><div><strong>Discuss</strong><span>Ask questions. Spot who is faking it.</span></div></li>
-            <li><i class="fa-solid fa-check-to-slot"></i><div><strong>Vote</strong><span>Most votes gets eliminated. Catch the spy to score.</span></div></li>
-            <li><i class="fa-solid fa-map-location-dot"></i><div><strong>Spy guesses</strong><span>Escaped spies guess the location for +3.</span></div></li>
+            <li><i class="fa-solid fa-ticket"></i>
+              <div><strong>Create &amp; share</strong><span>Host makes a room, friends join with the code.</span></div>
+            </li>
+            <li><i class="fa-solid fa-comments"></i>
+              <div><strong>Discuss</strong><span>Ask questions. Spot who is faking it.</span></div>
+            </li>
+            <li><i class="fa-solid fa-check-to-slot"></i>
+              <div><strong>Vote</strong><span>Most votes gets eliminated. Catch the spy to score.</span></div>
+            </li>
+            <li><i class="fa-solid fa-map-location-dot"></i>
+              <div><strong>Spy guesses</strong><span>Escaped spies guess the location for +3.</span></div>
+            </li>
           </ol>
         </details>
       </div>
@@ -158,13 +190,17 @@
     <!-- ============ GAME ============ -->
     <div id="game" class="screen">
       <header class="game-header">
-        <div class="phase" id="phase-label"><i class="fa-solid fa-comments"></i> <span id="phase-text">Discussion</span></div>
-        <div class="timer" id="timer" title="Time left"><i class="fa-solid fa-stopwatch"></i> <span id="timer-text">2:00</span></div>
+        <div class="phase" id="phase-label"><i class="fa-solid fa-comments"></i> <span id="phase-text">Discussion</span>
+        </div>
+        <div class="timer" id="timer" title="Time left"><i class="fa-solid fa-stopwatch"></i> <span
+            id="timer-text">2:00</span></div>
         <div class="round" id="round-label"><i class="fa-solid fa-rotate"></i> R1</div>
       </header>
 
       <div class="quest" aria-hidden="true">
-        <div class="quest-track"><div class="quest-fill" id="quest-fill"></div></div>
+        <div class="quest-track">
+          <div class="quest-fill" id="quest-fill"></div>
+        </div>
         <div class="quest-nodes" id="quest-nodes">
           <span class="qnode" data-ph="role"><i class="fa-solid fa-eye"></i></span>
           <span class="qnode" data-ph="discuss"><i class="fa-solid fa-comments"></i></span>
@@ -176,6 +212,7 @@
       <div class="role-banner" id="role-banner">
         <div class="role-title" id="role-title"><i class="fa-solid fa-user-shield"></i> You are a Citizen</div>
         <div class="location" id="location-display">???</div>
+        <div class="role-ally hidden" id="role-ally"></div>
         <div class="role-sub" id="role-sub">Blend in. Find the spy.</div>
       </div>
 
@@ -183,65 +220,80 @@
         <div class="players-panel" id="players-panel"></div>
 
         <div class="chat-panel">
-          <div class="chat-header"><i class="fa-solid fa-comments"></i> Chat <span id="vote-progress" class="vote-progress hidden"></span></div>
+          <div class="chat-header"><i class="fa-solid fa-comments"></i> Chat <span id="vote-progress"
+              class="vote-progress hidden"></span></div>
           <div class="chat-messages" id="chat-messages" aria-live="polite"></div>
           <div class="emote-bar" id="emote-bar" aria-label="Quick reactions">
-            <button data-emote="😂" aria-label="Laugh">😂</button>
-            <button data-emote="🔥" aria-label="Fire">🔥</button>
-            <button data-emote="🕵️" aria-label="Spy">🕵️</button>
-            <button data-emote="👏" aria-label="Clap">👏</button>
-            <button data-emote="😮" aria-label="Wow">😮</button>
-            <button id="prompt-btn" title="Send an icebreaker question" aria-label="Send an icebreaker question"><i class="fa-solid fa-lightbulb"></i></button>
+            <button type="button" data-emote="😂" aria-label="Laugh">😂</button>
+            <button type="button" data-emote="🔥" aria-label="Fire">🔥</button>
+            <button type="button" data-emote="🕵️" aria-label="Spy">🕵️</button>
+            <button type="button" data-emote="👏" aria-label="Clap">👏</button>
+            <button type="button" data-emote="😮" aria-label="Wow">😮</button>
+            <button type="button" id="prompt-btn" title="Send an icebreaker question"
+              aria-label="Send an icebreaker question"><i class="fa-solid fa-lightbulb"></i></button>
           </div>
           <div class="chat-input">
-            <input type="text" id="chat-input" placeholder="Ask a question…" maxlength="180" autocomplete="off" enterkeyhint="send">
-            <button id="send-btn" aria-label="Send message"><i class="fa-solid fa-paper-plane"></i></button>
+            <input type="text" id="chat-input" placeholder="Ask a question…" maxlength="180" autocomplete="off"
+              enterkeyhint="send">
+            <button type="button" id="send-btn" aria-label="Send message"><i
+                class="fa-solid fa-paper-plane"></i></button>
           </div>
         </div>
       </div>
 
       <div class="action-bar" id="action-bar">
-        <button id="vote-now-btn" class="action-btn"><i class="fa-solid fa-check-to-slot"></i><span>Vote</span></button>
-        <button id="guess-now-btn" class="action-btn ghost-hide"><i class="fa-solid fa-map-location-dot"></i><span>Guess</span></button>
-        <button id="voice-btn" class="action-btn"><i class="fa-solid fa-microphone-slash"></i><span>Voice</span></button>
-        <button id="sound-btn" class="action-btn"><i class="fa-solid fa-volume-high"></i><span>Sound</span></button>
-        <button id="quit-btn" class="action-btn danger"><i class="fa-solid fa-door-open"></i><span>Leave</span></button>
+        <button type="button" id="vote-now-btn" class="action-btn"><i
+            class="fa-solid fa-check-to-slot"></i><span>Vote</span></button>
+        <button type="button" id="guess-now-btn" class="action-btn ghost-hide"><i
+            class="fa-solid fa-map-location-dot"></i><span>Guess</span></button>
+        <button type="button" id="voice-btn" class="action-btn"><i
+            class="fa-solid fa-microphone-slash"></i><span>Voice</span></button>
+        <button type="button" id="sound-btn" class="action-btn"><i
+            class="fa-solid fa-volume-high"></i><span>Sound</span></button>
+        <button type="button" id="quit-btn" class="action-btn danger"><i
+            class="fa-solid fa-door-open"></i><span>Leave</span></button>
       </div>
     </div>
 
     <!-- Vote Modal -->
     <div id="vote-modal" class="modal hidden" role="dialog" aria-modal="true" aria-label="Vote for the spy">
       <div class="modal-content">
-        <button class="modal-x" data-close="vote-modal" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
+        <button type="button" class="modal-x" data-close="vote-modal" aria-label="Close"><i
+            class="fa-solid fa-xmark"></i></button>
         <h2><i class="fa-solid fa-check-to-slot"></i> Vote for the Spy</h2>
         <p class="modal-sub">Who is acting suspicious? <span id="vote-timer-sub"></span></p>
         <div id="vote-options" class="vote-options" role="listbox" aria-label="Vote for the spy"></div>
-        <button id="confirm-vote" class="btn primary" disabled><i class="fa-solid fa-check"></i> Confirm Vote</button>
+        <button type="button" id="confirm-vote" class="btn primary" disabled><i class="fa-solid fa-check"></i> Confirm
+          Vote</button>
       </div>
     </div>
 
     <!-- Spy Guess Modal -->
     <div id="guess-modal" class="modal hidden" role="dialog" aria-modal="true" aria-label="Guess the location">
       <div class="modal-content">
-        <button class="modal-x" data-close="guess-modal" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
+        <button type="button" class="modal-x" data-close="guess-modal" aria-label="Close"><i
+            class="fa-solid fa-xmark"></i></button>
         <h2><i class="fa-solid fa-map-location-dot"></i> Guess the Location</h2>
         <p class="modal-sub">Nail it for <strong>+3 points</strong>. Wrong guess costs nothing.</p>
         <input type="text" id="guess-search" placeholder="Search locations…" autocomplete="off">
         <div id="guess-options" class="vote-options" role="listbox" aria-label="Guess the location"></div>
-        <button id="confirm-guess" class="btn primary" disabled><i class="fa-solid fa-paper-plane"></i> Submit Guess</button>
+        <button type="button" id="confirm-guess" class="btn primary" disabled><i class="fa-solid fa-paper-plane"></i>
+          Submit Guess</button>
       </div>
     </div>
 
     <!-- Results Overlay -->
-    <div id="results" class="overlay hidden" role="dialog" aria-modal="true">
+    <div id="results" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="results-title">
       <div class="results-card">
         <div class="results-icon" id="results-icon"><i class="fa-solid fa-flag"></i></div>
         <h2 id="results-title">Round Over</h2>
         <div id="results-content"></div>
         <div class="results-actions">
-          <button id="next-round-btn" class="btn primary"><i class="fa-solid fa-forward"></i> Next Round</button>
+          <button type="button" id="next-round-btn" class="btn primary"><i class="fa-solid fa-forward"></i> Next
+            Round</button>
           <p id="wait-host" class="hint hidden"><i class="fa-solid fa-hourglass-half"></i> Waiting for host…</p>
-          <button id="end-game-btn" class="btn secondary"><i class="fa-solid fa-flag-checkered"></i> End Game</button>
+          <button type="button" id="end-game-btn" class="btn secondary"><i class="fa-solid fa-flag-checkered"></i> End
+            Game</button>
         </div>
       </div>
     </div>
@@ -249,7 +301,8 @@
     <!-- Settings Modal -->
     <div id="settings-modal" class="modal hidden" role="dialog" aria-modal="true" aria-label="Settings">
       <div class="modal-content">
-        <button class="modal-x" data-close="settings-modal" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
+        <button type="button" class="modal-x" data-close="settings-modal" aria-label="Close"><i
+            class="fa-solid fa-xmark"></i></button>
         <h2><i class="fa-solid fa-gear"></i> Settings</h2>
         <div class="setting-group">
           <label for="theme-select"><i class="fa-solid fa-palette"></i> Theme</label>
@@ -263,7 +316,8 @@
         </div>
         <div class="setting-group row">
           <label for="sound-toggle"><i class="fa-solid fa-volume-high"></i> Sound effects</label>
-          <label class="duo-check"><input type="checkbox" id="sound-toggle" checked><span class="box"><i class="fa-solid fa-check"></i></span></label>
+          <label class="duo-check"><input type="checkbox" id="sound-toggle" checked><span class="box"><i
+                class="fa-solid fa-check"></i></span></label>
         </div>
         <div class="setting-group row">
           <label for="vol-range"><i class="fa-solid fa-sliders"></i> Volume</label>
@@ -271,7 +325,8 @@
         </div>
         <div class="setting-group row">
           <label for="music-toggle"><i class="fa-solid fa-music"></i> Lobby music</label>
-          <label class="duo-check"><input type="checkbox" id="music-toggle" checked><span class="box"><i class="fa-solid fa-check"></i></span></label>
+          <label class="duo-check"><input type="checkbox" id="music-toggle" checked><span class="box"><i
+                class="fa-solid fa-check"></i></span></label>
         </div>
         <div class="setting-group">
           <label for="discuss-time"><i class="fa-solid fa-comments"></i> Discussion time (seconds)</label>
@@ -283,116 +338,143 @@
         </div>
         <div class="setting-group">
           <label for="dev-pin"><i class="fa-solid fa-lock"></i> Dev PIN (4+ digits)</label>
-          <input type="password" id="dev-pin" inputmode="numeric" maxlength="12" placeholder="Set a PIN to lock dev mode" autocomplete="off">
-          <p class="hint" style="text-align:left;margin-top:6px">Long-press the title or triple-click it, then enter this PIN. Default is <strong>2468</strong>.</p>
+          <input type="password" id="dev-pin" inputmode="numeric" maxlength="12"
+            placeholder="Set a PIN to lock dev mode" autocomplete="off">
+          <p class="hint" style="text-align:left;margin-top:6px">Long-press the title or triple-click it, then enter
+            this PIN. Default is <strong>2468</strong>.</p>
         </div>
         <div class="setting-group">
-          <label for="turn-url"><i class="fa-solid fa-tower-broadcast"></i> TURN relay (optional, for strict NATs)</label>
-          <input type="text" id="turn-url" inputmode="url" maxlength="120" placeholder="turn:host:3478" autocomplete="off" spellcheck="false">
-          <input type="text" id="turn-user" maxlength="64" placeholder="username (optional)" autocomplete="off" spellcheck="false">
+          <label for="turn-url"><i class="fa-solid fa-tower-broadcast"></i> TURN relay (optional, for strict
+            NATs)</label>
+          <input type="text" id="turn-url" inputmode="url" maxlength="120" placeholder="turn:host:3478"
+            autocomplete="off" spellcheck="false">
+          <input type="text" id="turn-user" maxlength="64" placeholder="username (optional)" autocomplete="off"
+            spellcheck="false">
           <input type="password" id="turn-pass" maxlength="128" placeholder="credential (optional)" autocomplete="off">
-          <p class="hint" style="text-align:left;margin-top:6px">Saved on this device only. Takes effect on next create/join. Free option: run <strong>coturn</strong> on a small VM.</p>
+          <p class="hint" style="text-align:left;margin-top:6px">Saved on this device only. Takes effect on next
+            create/join. Free option: run <strong>coturn</strong> on a small VM.</p>
         </div>
-        <button id="close-settings" class="btn primary"><i class="fa-solid fa-check"></i> Done</button>
+        <button type="button" id="close-settings" class="btn primary"><i class="fa-solid fa-check"></i> Done</button>
       </div>
     </div>
 
     <!-- Developer PIN gate -->
     <div id="dev-lock-modal" class="modal hidden" role="dialog" aria-modal="true" aria-label="Developer PIN">
       <div class="modal-content">
-        <button class="modal-x" data-close="dev-lock-modal" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
+        <button type="button" class="modal-x" data-close="dev-lock-modal" aria-label="Close"><i
+            class="fa-solid fa-xmark"></i></button>
         <h2><i class="fa-solid fa-lock"></i> Dev mode is locked</h2>
-        <p class="modal-sub">Enter the dev PIN to continue. Default is <strong>2468</strong> — change it in Settings.</p>
-        <input type="password" id="dev-pin-input" inputmode="numeric" maxlength="12" placeholder="••••" autocomplete="off">
+        <p class="modal-sub">Enter the dev PIN to continue. Default is <strong>2468</strong> — change it in Settings.
+        </p>
+        <input type="password" id="dev-pin-input" inputmode="numeric" maxlength="12" placeholder="••••"
+          autocomplete="off">
         <p id="dev-pin-error" class="hint hidden" style="color:var(--danger)">Wrong PIN. Try again.</p>
-        <button id="dev-pin-submit" class="btn primary"><i class="fa-solid fa-unlock"></i> Unlock</button>
+        <button type="button" id="dev-pin-submit" class="btn primary"><i class="fa-solid fa-unlock"></i> Unlock</button>
       </div>
     </div>
 
     <!-- Shop Modal -->
     <div id="shop-modal" class="modal hidden" role="dialog" aria-modal="true" aria-label="Shop">
       <div class="modal-content">
-        <button class="modal-x" data-close="shop-modal" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
+        <button type="button" class="modal-x" data-close="shop-modal" aria-label="Close"><i
+            class="fa-solid fa-xmark"></i></button>
         <h2><i class="fa-solid fa-store"></i> Shop</h2>
-        <p class="modal-sub">Balance: <strong><i class="fa-solid fa-coins"></i> <span id="shop-balance">100</span></strong> · Earn coins by scoring points.</p>
-        <div id="shop-items" class="shop-grid"></div>
+        <p class="modal-sub">Balance: <strong><i class="fa-solid fa-coins"></i> <span
+              id="shop-balance">100</span></strong> · Earn coins by scoring points.</p>
+        <div id="shop-items"></div>
       </div>
     </div>
 
     <!-- Avatar Modal -->
     <div id="avatar-modal" class="modal hidden" role="dialog" aria-modal="true" aria-label="Avatar builder">
       <div class="modal-content">
-        <button class="modal-x" data-close="avatar-modal" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
+        <button type="button" class="modal-x" data-close="avatar-modal" aria-label="Close"><i
+            class="fa-solid fa-xmark"></i></button>
         <h2><i class="fa-solid fa-face-smile"></i> Your avatar</h2>
         <p class="modal-sub">Pick a tab, tap a style, frame it from the Shop.</p>
         <div class="avatar-preview" id="avatar-preview"></div>
         <div class="avatar-gen-row">
-          <button id="avatar-shuffle" class="btn small secondary"><i class="fa-solid fa-dice"></i> Shuffle</button>
-          <button id="avatar-reset" class="btn small ghost"><i class="fa-solid fa-rotate-left"></i> Reset</button>
+          <button type="button" id="avatar-shuffle" class="btn small secondary"><i class="fa-solid fa-dice"></i>
+            Shuffle</button>
+          <button type="button" id="avatar-reset" class="btn small ghost"><i class="fa-solid fa-rotate-left"></i>
+            Reset</button>
         </div>
-        <div class="setting-group"><label>Style</label><div id="avatar-tabs" class="tab-row"></div></div>
-        <div class="setting-group"><div id="avatar-options" class="pick-grid big"></div></div>
-        <div class="setting-group"><label>Frame (buy more in Shop)</label><div id="avatar-frames" class="pick-grid"></div></div>
-        <button id="avatar-save" class="btn primary"><i class="fa-solid fa-check"></i> Save avatar</button>
+        <div class="setting-group"><label>Style</label>
+          <div id="avatar-tabs" class="tab-row"></div>
+        </div>
+        <div class="setting-group">
+          <div id="avatar-options" class="pick-grid big"></div>
+        </div>
+        <div class="setting-group"><label>Frame (buy more in Shop)</label>
+          <div id="avatar-frames" class="pick-grid"></div>
+        </div>
+        <button type="button" id="avatar-save" class="btn primary"><i class="fa-solid fa-check"></i> Save
+          avatar</button>
       </div>
     </div>
 
     <!-- Gift Modal -->
     <div id="gift-modal" class="modal hidden" role="dialog" aria-modal="true" aria-label="Send coins">
       <div class="modal-content">
-        <button class="modal-x" data-close="gift-modal" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
+        <button type="button" class="modal-x" data-close="gift-modal" aria-label="Close"><i
+            class="fa-solid fa-xmark"></i></button>
         <h2><i class="fa-solid fa-gift"></i> Send coins</h2>
         <p class="modal-sub">Your balance: <strong><span id="gift-balance">100</span></strong></p>
         <div class="setting-group"><label for="gift-to">To</label><select id="gift-to"></select></div>
-        <div class="setting-group"><label for="gift-amount">Amount</label><input type="number" id="gift-amount" min="5" max="500" step="5" value="20"></div>
-        <button id="gift-send" class="btn primary"><i class="fa-solid fa-paper-plane"></i> Send gift</button>
+        <div class="setting-group"><label for="gift-amount">Amount</label><input type="number" id="gift-amount" min="5"
+            max="500" step="5" value="20"></div>
+        <button type="button" id="gift-send" class="btn primary"><i class="fa-solid fa-paper-plane"></i> Send
+          gift</button>
       </div>
     </div>
 
     <!-- Developer Panel -->
     <div id="dev-panel" class="dev-panel hidden" role="dialog" aria-modal="false" aria-label="Developer panel">
       <div class="dev-header">
-        <span class="dev-title"><i class="fa-solid fa-bug"></i> Dev Mode <span id="dev-fps" class="dev-fps pill-badge">… fps</span></span>
-        <button id="close-dev" class="modal-x" aria-label="Close dev panel"><i class="fa-solid fa-xmark"></i></button>
+        <span class="dev-title"><i class="fa-solid fa-bug"></i> Dev Mode <span id="dev-fps"
+            class="dev-fps pill-badge">60 fps</span></span>
+        <button type="button" id="close-dev" class="modal-x" aria-label="Close dev panel"><i
+            class="fa-solid fa-xmark"></i></button>
       </div>
       <div class="dev-content">
         <div id="dev-state" class="dev-state"></div>
         <div class="dev-group-label">Phases &amp; timers</div>
         <div class="dev-buttons">
-          <button id="dev-force-vote"><i class="fa-solid fa-forward"></i> Force vote</button>
-          <button id="dev-end-vote"><i class="fa-solid fa-flag"></i> End vote</button>
-          <button id="dev-skip-timer"><i class="fa-solid fa-forward-fast"></i> Skip timer</button>
-          <button id="dev-force-results"><i class="fa-solid fa-square-poll-vertical"></i> Force results</button>
-          <button id="dev-end-game"><i class="fa-solid fa-flag-checkered"></i> End game</button>
+          <button type="button" id="dev-force-vote"><i class="fa-solid fa-forward"></i> Force vote</button>
+          <button type="button" id="dev-end-vote"><i class="fa-solid fa-flag"></i> End vote</button>
+          <button type="button" id="dev-skip-timer"><i class="fa-solid fa-forward-fast"></i> Skip timer</button>
+          <button type="button" id="dev-force-results"><i class="fa-solid fa-square-poll-vertical"></i> Force
+            results</button>
+          <button type="button" id="dev-end-game"><i class="fa-solid fa-flag-checkered"></i> End game</button>
         </div>
         <div class="dev-group-label">Roles &amp; secrets</div>
         <div class="dev-buttons">
-          <button id="dev-reveal-spy"><i class="fa-solid fa-eye"></i> Reveal spy</button>
-          <button id="dev-become-spy"><i class="fa-solid fa-user-secret"></i> Become spy</button>
-          <button id="dev-become-citizen"><i class="fa-solid fa-user-shield"></i> Become citizen</button>
-          <button id="dev-rig-spy"><i class="fa-solid fa-crosshairs"></i> Rig spy</button>
-          <button id="dev-set-location"><i class="fa-solid fa-location-dot"></i> Set location</button>
-          <button id="dev-spoof-spy"><i class="fa-solid fa-mask"></i> Spoof spy UI</button>
-          <button id="dev-unspoof"><i class="fa-solid fa-rotate-left"></i> Unspoof</button>
+          <button type="button" id="dev-reveal-spy"><i class="fa-solid fa-eye"></i> Reveal spy</button>
+          <button type="button" id="dev-become-spy"><i class="fa-solid fa-user-secret"></i> Become spy</button>
+          <button type="button" id="dev-become-citizen"><i class="fa-solid fa-user-shield"></i> Become citizen</button>
+          <button type="button" id="dev-rig-spy"><i class="fa-solid fa-crosshairs"></i> Rig spy</button>
+          <button type="button" id="dev-set-location"><i class="fa-solid fa-location-dot"></i> Set location</button>
+          <button type="button" id="dev-spoof-spy"><i class="fa-solid fa-mask"></i> Spoof spy UI</button>
+          <button type="button" id="dev-unspoof"><i class="fa-solid fa-rotate-left"></i> Unspoof</button>
         </div>
         <div class="dev-group-label">Economy &amp; score</div>
         <div class="dev-buttons">
-          <button id="dev-add-coins"><i class="fa-solid fa-coins"></i> +500 coins</button>
-          <button id="dev-set-coins"><i class="fa-solid fa-sack-dollar"></i> Set coins</button>
-          <button id="dev-unlock-all"><i class="fa-solid fa-unlock"></i> Unlock all</button>
-          <button id="dev-bump-score"><i class="fa-solid fa-plus"></i> +3 score</button>
-          <button id="dev-set-score"><i class="fa-solid fa-star"></i> Set score</button>
-          <button id="dev-set-streak"><i class="fa-solid fa-fire"></i> Set streak</button>
-          <button id="dev-send-system"><i class="fa-solid fa-bullhorn"></i> System msg</button>
+          <button type="button" id="dev-add-coins"><i class="fa-solid fa-coins"></i> +500 coins</button>
+          <button type="button" id="dev-set-coins"><i class="fa-solid fa-sack-dollar"></i> Set coins</button>
+          <button type="button" id="dev-unlock-all"><i class="fa-solid fa-unlock"></i> Unlock all</button>
+          <button type="button" id="dev-bump-score"><i class="fa-solid fa-plus"></i> +3 score</button>
+          <button type="button" id="dev-set-score"><i class="fa-solid fa-star"></i> Set score</button>
+          <button type="button" id="dev-set-streak"><i class="fa-solid fa-fire"></i> Set streak</button>
+          <button type="button" id="dev-send-system"><i class="fa-solid fa-bullhorn"></i> System msg</button>
         </div>
         <div class="dev-group-label">Room &amp; debug</div>
         <div class="dev-buttons">
-          <button id="dev-add-bot"><i class="fa-solid fa-robot"></i> Add bot</button>
-          <button id="dev-remove-bots"><i class="fa-solid fa-robot"></i> Remove bots</button>
-          <button id="dev-kick"><i class="fa-solid fa-user-xmark"></i> Kick</button>
-          <button id="dev-clear-chat"><i class="fa-solid fa-trash"></i> Clear chat</button>
-          <button id="dev-copy-state"><i class="fa-solid fa-copy"></i> Copy state</button>
-          <button id="dev-log-state"><i class="fa-solid fa-terminal"></i> Log state</button>
+          <button type="button" id="dev-add-bot"><i class="fa-solid fa-robot"></i> Add bot</button>
+          <button type="button" id="dev-remove-bots"><i class="fa-solid fa-robot"></i> Remove bots</button>
+          <button type="button" id="dev-kick"><i class="fa-solid fa-user-xmark"></i> Kick</button>
+          <button type="button" id="dev-clear-chat"><i class="fa-solid fa-trash"></i> Clear chat</button>
+          <button type="button" id="dev-copy-state"><i class="fa-solid fa-copy"></i> Copy state</button>
+          <button type="button" id="dev-log-state"><i class="fa-solid fa-terminal"></i> Log state</button>
         </div>
         <pre id="dev-log" class="dev-log" aria-live="polite"></pre>
       </div>
@@ -404,6 +486,7 @@
   </div>
 
   <script defer src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
-  <script defer src="script.js?v=15"></script>
+  <script defer src="script.js?v=16"></script>
 </body>
+
 </html>
