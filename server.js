@@ -34,7 +34,10 @@ const GZIP_RE = /\.(html|css|js|json|svg|txt|webmanifest)$/;
 
 function cacheControl(file, versioned) {
   if (/sw\.js$/.test(file)) return "no-cache, must-revalidate";
-  if (/\.(woff2?|ttf|png|ico|wav|mp3|ogg)$/.test(file)) return "public, max-age=31536000, immutable";
+  // year-long immutable is only safe for fingerprinted URLs — an unversioned
+  // wav at the same path would pin stale audio for a year
+  if (/\.(woff2?|ttf|png|ico)$/.test(file)) return "public, max-age=31536000, immutable";
+  if (/\.(wav|mp3|ogg)$/.test(file)) return versioned ? "public, max-age=31536000, immutable" : "public, max-age=3600";
   // versioned (?v=N)CSS/JS are unique per release — cache hard, they can't go stale
   if (versioned && /\.(css|js|json|svg)$/.test(file)) return "public, max-age=31536000, immutable";
   if (/\.(css|js)$/.test(file)) return "public, max-age=3600";
@@ -87,7 +90,13 @@ const server = http.createServer((req, res) => {
   try {
     const qi = req.url.indexOf("?");
     const urlPath = decodeURIComponent(qi >= 0 ? req.url.slice(0, qi) : req.url);
-    const versioned = qi >= 0 && req.url.slice(qi + 1).split("&").some(p => p === `v=${APP_VERSION}`);
+    // accept ?v=N among any other params (?v=15&x=1 still counts as versioned)
+    let versioned = false;
+    if (qi >= 0) {
+      try {
+        versioned = new URLSearchParams(req.url.slice(qi + 1)).get("v") === APP_VERSION;
+      } catch (e) { versioned = false; }
+    }
     // resolve inside ROOT; blocks "../" escapes
     let filePath = path.normalize(path.join(ROOT, urlPath === "/" ? "index.html" : urlPath.slice(1)));
     if (!filePath.startsWith(ROOT)) {

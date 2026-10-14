@@ -350,35 +350,49 @@
     </div>
 
     <!-- Developer Panel -->
-    <div id="dev-panel" class="dev-panel hidden" role="complementary" aria-label="Developer panel">
+    <div id="dev-panel" class="dev-panel hidden" role="dialog" aria-modal="false" aria-label="Developer panel">
       <div class="dev-header">
-        <span><i class="fa-solid fa-bug"></i> Dev Mode <span id="dev-fps" class="dev-fps"></span></span>
-        <button id="close-dev" aria-label="Close dev panel"><i class="fa-solid fa-xmark"></i></button>
+        <span class="dev-title"><i class="fa-solid fa-bug"></i> Dev Mode <span id="dev-fps" class="dev-fps pill-badge">… fps</span></span>
+        <button id="close-dev" class="modal-x" aria-label="Close dev panel"><i class="fa-solid fa-xmark"></i></button>
       </div>
       <div class="dev-content">
         <div id="dev-state" class="dev-state"></div>
+        <div class="dev-group-label">Phases &amp; timers</div>
         <div class="dev-buttons">
           <button id="dev-force-vote"><i class="fa-solid fa-forward"></i> Force vote</button>
           <button id="dev-end-vote"><i class="fa-solid fa-flag"></i> End vote</button>
+          <button id="dev-skip-timer"><i class="fa-solid fa-forward-fast"></i> Skip timer</button>
+          <button id="dev-force-results"><i class="fa-solid fa-square-poll-vertical"></i> Force results</button>
+          <button id="dev-end-game"><i class="fa-solid fa-flag-checkered"></i> End game</button>
+        </div>
+        <div class="dev-group-label">Roles &amp; secrets</div>
+        <div class="dev-buttons">
           <button id="dev-reveal-spy"><i class="fa-solid fa-eye"></i> Reveal spy</button>
-          <button id="dev-add-bot"><i class="fa-solid fa-robot"></i> Add bot</button>
-          <button id="dev-remove-bots"><i class="fa-solid fa-robot"></i> Remove bots</button>
-          <button id="dev-clear-chat"><i class="fa-solid fa-trash"></i> Clear chat</button>
-          <button id="dev-copy-state"><i class="fa-solid fa-copy"></i> Copy state</button>
-          <button id="dev-log-state"><i class="fa-solid fa-terminal"></i> Log state</button>
           <button id="dev-become-spy"><i class="fa-solid fa-user-secret"></i> Become spy</button>
           <button id="dev-become-citizen"><i class="fa-solid fa-user-shield"></i> Become citizen</button>
+          <button id="dev-rig-spy"><i class="fa-solid fa-crosshairs"></i> Rig spy</button>
           <button id="dev-set-location"><i class="fa-solid fa-location-dot"></i> Set location</button>
           <button id="dev-spoof-spy"><i class="fa-solid fa-mask"></i> Spoof spy UI</button>
           <button id="dev-unspoof"><i class="fa-solid fa-rotate-left"></i> Unspoof</button>
+        </div>
+        <div class="dev-group-label">Economy &amp; score</div>
+        <div class="dev-buttons">
           <button id="dev-add-coins"><i class="fa-solid fa-coins"></i> +500 coins</button>
+          <button id="dev-set-coins"><i class="fa-solid fa-sack-dollar"></i> Set coins</button>
           <button id="dev-unlock-all"><i class="fa-solid fa-unlock"></i> Unlock all</button>
           <button id="dev-bump-score"><i class="fa-solid fa-plus"></i> +3 score</button>
-          <button id="dev-skip-timer"><i class="fa-solid fa-forward-fast"></i> Skip timer</button>
-          <button id="dev-force-results"><i class="fa-solid fa-square-poll-vertical"></i> Force results</button>
+          <button id="dev-set-score"><i class="fa-solid fa-star"></i> Set score</button>
+          <button id="dev-set-streak"><i class="fa-solid fa-fire"></i> Set streak</button>
           <button id="dev-send-system"><i class="fa-solid fa-bullhorn"></i> System msg</button>
+        </div>
+        <div class="dev-group-label">Room &amp; debug</div>
+        <div class="dev-buttons">
+          <button id="dev-add-bot"><i class="fa-solid fa-robot"></i> Add bot</button>
+          <button id="dev-remove-bots"><i class="fa-solid fa-robot"></i> Remove bots</button>
           <button id="dev-kick"><i class="fa-solid fa-user-xmark"></i> Kick</button>
-          <button id="dev-end-game"><i class="fa-solid fa-flag-checkered"></i> End game</button>
+          <button id="dev-clear-chat"><i class="fa-solid fa-trash"></i> Clear chat</button>
+          <button id="dev-copy-state"><i class="fa-solid fa-copy"></i> Copy state</button>
+          <button id="dev-log-state"><i class="fa-solid fa-terminal"></i> Log state</button>
         </div>
         <pre id="dev-log" class="dev-log" aria-live="polite"></pre>
       </div>

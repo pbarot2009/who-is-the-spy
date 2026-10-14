@@ -49,12 +49,18 @@ const MODES = {
 
 const SHOP_ITEMS = [
   { id: "frame-gold", name: "Gold Frame", price: 100, kind: "frame" },
+  { id: "frame-silver", name: "Silver Frame", price: 120, kind: "frame" },
   { id: "frame-neon", name: "Neon Frame", price: 150, kind: "frame" },
+  { id: "frame-frost", name: "Frost Frame", price: 200, kind: "frame" },
   { id: "frame-rainbow", name: "Rainbow Frame", price: 250, kind: "frame" },
-  { id: "theme-spy", name: "Spy Red Theme", price: 50, kind: "theme", theme: "spy" },
-  { id: "theme-ocean", name: "Ocean Theme", price: 50, kind: "theme", theme: "ocean" },
-  { id: "theme-forest", name: "Forest Theme", price: 50, kind: "theme", theme: "forest" }
+  { id: "frame-royal", name: "Royal Frame", price: 300, kind: "frame" },
+  { id: "theme-spy", name: "Spy Red Theme", price: 50, kind: "theme", theme: "spy", color: "#ef4444" },
+  { id: "theme-ocean", name: "Ocean Theme", price: 50, kind: "theme", theme: "ocean", color: "#0ea5e9" },
+  { id: "theme-forest", name: "Forest Theme", price: 50, kind: "theme", theme: "forest", color: "#22c55e" }
 ];
+// Dark + Light are free. Spy/Ocean/Forest are shop-unlocked — buying them
+// means something because the settings picker enforces it (themeIsOwned).
+const THEME_SHOP = { spy: "theme-spy", ocean: "theme-ocean", forest: "theme-forest" };
 
 const AVATAR_ICONS = ["fa-user-secret", "fa-ghost", "fa-robot", "fa-cat", "fa-dragon", "fa-rocket", "fa-crown", "fa-bolt"];
 const PROMPTS = [
@@ -84,6 +90,9 @@ function safeParseJSON(raw, fallback) {
 // NOTE: this block must stay above buildICE()/Game — both read store at load.
 const store = {
   _mem: Object.create(null),
+  // keys whose last set() failed to reach disk (quota/private mode) —
+  // memory holds the newer value, so get() must prefer it for these
+  _dirty: Object.create(null),
   _lsOk: null,
   lsOk() {
     if (this._lsOk !== null) return this._lsOk;
@@ -96,6 +105,11 @@ const store = {
     return this._lsOk;
   },
   get(k, f) {
+    // dirty keys: memory is newer than disk (disk write failed) — read it first
+    try {
+      if (Object.prototype.hasOwnProperty.call(this._dirty, k)
+        && Object.prototype.hasOwnProperty.call(this._mem, k)) return this._mem[k];
+    } catch (e) {}
     try {
       const v = window.localStorage.getItem(k);
       if (v != null) return v;
@@ -108,10 +122,12 @@ const store = {
   set(k, v) {
     const s = String(v);
     try { this._mem[k] = s; } catch (e) {}
-    try { window.localStorage.setItem(k, s); } catch (e) { /* quota/private-mode: memory copy still holds */ }
+    try { window.localStorage.setItem(k, s); try { delete this._dirty[k]; } catch (e2) {} }
+    catch (e) { try { this._dirty[k] = 1; } catch (e2) {} /* quota/private-mode: memory copy still holds */ }
   },
   del(k) {
     try { delete this._mem[k]; } catch (e) {}
+    try { delete this._dirty[k]; } catch (e) {}
     try { window.localStorage.removeItem(k); } catch (e) {}
   },
   getJSON(k, fallback) {
@@ -124,14 +140,26 @@ const store = {
 // Session-scoped flag (dev auth). Same throw-safe pattern — raw
 // sessionStorage throws in private mode / blocked cookies.
 const sess = {
+  // in-tab memory mirror: blocked sessionStorage (private mode) must not
+  // silently drop flags like dev auth mid-session
+  _mem: Object.create(null),
   get(k) {
-    try { return window.sessionStorage.getItem(k); }
-    catch (e) { return null; }
+    try {
+      const v = window.sessionStorage.getItem(k);
+      if (v != null) return v;
+    } catch (e) {}
+    try {
+      if (Object.prototype.hasOwnProperty.call(this._mem, k)) return this._mem[k];
+    } catch (e) {}
+    return null;
   },
   set(k, v) {
-    try { window.sessionStorage.setItem(k, String(v)); } catch (e) {}
+    const s = String(v);
+    try { this._mem[k] = s; } catch (e) {}
+    try { window.sessionStorage.setItem(k, s); } catch (e) {}
   },
   del(k) {
+    try { delete this._mem[k]; } catch (e) {}
     try { window.sessionStorage.removeItem(k); } catch (e) {}
   }
 };
@@ -151,8 +179,11 @@ function buildICE() {
   try {
     const raw = store.get("spy_turn");
     if (raw) {
-      const t = JSON.parse(raw);
-      if (t && t.urls) servers.push(t);
+      const parsed = JSON.parse(raw);
+      // single object (back-compat) or a list — UDP/TCP/TLS variants welcome:
+      // symmetric/CG-NAT and UDP-blocking firewalls need more than one entry
+      const list = Array.isArray(parsed) ? parsed : [parsed];
+      list.forEach(t => { if (t && t.urls) servers.push(t); });
     }
   } catch (e) {}
   return { iceServers: servers };
@@ -342,7 +373,7 @@ class Game {
 
     this.loadSettings();
     this.initUI();
-    this.applyTheme(store.get("spy_theme", "dark") || "dark");
+    this.applyTheme(store.get("spy_theme", "dark") || "dark", { silent: true });
     this.checkDevMode();
     this.setStatus("Offline", false);
   }
@@ -529,7 +560,7 @@ class Game {
       const a = new Audio();
       a.loop = true;
       a.preload = "none";
-      a.src = "assets/lobby-loop.wav";
+      a.src = "assets/lobby-loop.wav?v=15";
       a.addEventListener("error", () => {
         // file missing/offline mid-play — fall back to the synth loop once
         if (this.phase === "lobby" && this.music && (this.music.mode === "file-wait" || this.music.mode === "file")) this.startLobbySynth();
@@ -688,28 +719,85 @@ class Game {
     this.$("sound-toggle").checked = this.soundEnabled;
     this.$("discuss-time").value = this.discussTime;
     this.$("vote-time").value = this.voteTime;
-    this.$("theme-select").value = store.get("spy_theme", "dark") || "dark";
+    this.buildThemeOptions();
     this.syncSoundBtn();
     this.syncVoiceBtn();
   }
 
-  applyTheme(theme) {
+  themeLabel(t) {
+    const names = { dark: "Dark (Default)", light: "Light", spy: "Spy Red", ocean: "Ocean", forest: "Forest" };
+    const locked = !this.themeIsOwned(t);
+    return `${names[t] || t}${locked ? " 🔒" : ""}`;
+  }
+
+  buildThemeOptions() {
+    // settings picker mirrors shop ownership — locked themes show a lock
+    // instead of silently working for free
+    const sel = this.$("theme-select");
+    if (!sel) return;
+    const cur = store.get("spy_theme", "dark") || "dark";
+    sel.innerHTML = ["dark", "light", "spy", "ocean", "forest"]
+      .map(t => `<option value="${t}">${this.escapeHtml(this.themeLabel(t))}</option>`).join("");
+    this.setSelect(sel, ["dark", "light", "spy", "ocean", "forest"].includes(cur) ? cur : "dark");
+  }
+
+  applyTheme(theme, opts) {
     const ok = ["dark", "light", "spy", "ocean", "forest"];
     const t = ok.includes(theme) ? theme : "dark";
+    // locked theme picked without owning it (settings) — refuse + point at shop
+    if (!this.themeIsOwned(t) && !(opts && opts.allowLocked)) {
+      const sel = this.$("theme-select");
+      const cur = store.get("spy_theme", "dark") || "dark";
+      // boot stored a theme the shop now gates — fall back silently, no
+      // toast/sound before first paint; interactive picks get the message
+      const silent = !!(opts && opts.silent);
+      const fallback = this.themeIsOwned(cur) ? cur : "dark";
+      document.body.className = fallback === "dark" ? "" : `theme-${fallback}`;
+      store.set("spy_theme", fallback);
+      this.setSelect(sel, fallback);
+      if (!silent) {
+        this.toast(`${this.themeLabel(t).replace(" 🔒", "")} is locked — unlock it in the Shop`, "error");
+        this.playSound("error");
+      }
+      return fallback;
+    }
     document.body.className = t === "dark" ? "" : `theme-${t}`;
     store.set("spy_theme", t);
     const sel = this.$("theme-select");
     this.setSelect(sel, t);
     const meta = this.$("meta-theme");
     if (meta) meta.content = getComputedStyle(document.body).getPropertyValue("--bg").trim() || "#0f0f13";
+    return t;
   }
 
   focusModal(id) {
-    // move keyboard focus inside the dialog so Esc/focus order work
+    // move keyboard focus inside the dialog so Esc/focus order work;
+    // remember the opener so focus returns on dismiss (W3C dialog pattern)
     const m = this.$(id);
     if (!m) return;
+    try { this._lastFocus = document.activeElement; } catch (e) {}
     const target = m.querySelector("input:not([type=hidden]), button:not(.modal-x)") || m.querySelector(".modal-x");
     setTimeout(() => { try { target && target.focus({ preventScroll: true }); } catch (e) {} }, 60);
+  }
+
+  restoreFocus() {
+    try {
+      if (this._lastFocus && document.contains(this._lastFocus)) this._lastFocus.focus({ preventScroll: true });
+      this._lastFocus = null;
+    } catch (e) {}
+  }
+
+  trapTab(e) {
+    // keep Tab inside the topmost open modal (W3C modal dialog pattern)
+    if (e.key !== "Tab") return;
+    const open = [...document.querySelectorAll(".modal:not(.hidden)")].filter(m => m.offsetParent !== null);
+    if (!open.length) return;
+    const m = open[open.length - 1];
+    const items = [...m.querySelectorAll("button, input, select, [tabindex]")].filter(el => !el.disabled && el.tabIndex >= 0 && el.offsetParent !== null);
+    if (!items.length) return;
+    const first = items[0], last = items[items.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
   }
 
   openSettings() { this.closeAllDropdowns(); this.$("settings-modal").classList.remove("hidden"); this.focusModal("settings-modal"); }
@@ -801,19 +889,22 @@ class Game {
       btn.onclick = () => {
         this.closeAllDropdowns();
         this.$(btn.dataset.close).classList.add("hidden");
+        this.restoreFocus();
         if (btn.dataset.close === "vote-modal" && this.phase === "vote") this.toast("Vote closed — tap Vote to reopen");
       };
     });
     document.querySelectorAll(".modal, .overlay").forEach(m => {
-      m.addEventListener("click", e => { if (e.target === m && m.id !== "results") { this.closeAllDropdowns(); m.classList.add("hidden"); } });
+      m.addEventListener("click", e => { if (e.target === m && m.id !== "results") { this.closeAllDropdowns(); m.classList.add("hidden"); this.restoreFocus(); } });
     });
     document.addEventListener("keydown", e => {
       if (e.key === "Escape") {
         this.closeAllDropdowns();
         ["settings-modal", "vote-modal", "guess-modal", "shop-modal", "avatar-modal", "gift-modal", "dev-lock-modal"].forEach(id => this.$(id).classList.add("hidden"));
         if (this.devMode) this.toggleDevPanel(false);
+        this.restoreFocus();
         return;
       }
+      this.trapTab(e);
       // Alt+D opens the dev gate (ignored while typing in a field)
       const tag = (document.activeElement && document.activeElement.tagName) || "";
       const typing = tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA";
@@ -860,8 +951,12 @@ class Game {
     this.$("dev-spoof-spy").onclick = () => this.devSpoofSpy();
     this.$("dev-unspoof").onclick = () => this.devUnspoof();
     this.$("dev-add-coins").onclick = () => this.devAddCoins();
+    this.$("dev-set-coins").onclick = () => this.devSetCoins();
     this.$("dev-unlock-all").onclick = () => this.devUnlockAll();
     this.$("dev-bump-score").onclick = () => this.devBumpScore();
+    this.$("dev-set-score").onclick = () => this.devSetScore();
+    this.$("dev-set-streak").onclick = () => this.devSetStreak();
+    this.$("dev-rig-spy").onclick = () => this.devRigSpy();
     this.$("dev-skip-timer").onclick = () => this.devSkipTimer();
     this.$("dev-force-results").onclick = () => this.devForceResults();
     this.$("dev-send-system").onclick = () => this.devSendSystem();
@@ -922,7 +1017,7 @@ class Game {
     ["theme-select", "category-select", "mode-select", "gift-to"].forEach(id => this.enhanceSelect(this.$(id)));
     // click blip on every tappable control (70ms dedupe kills double-fires)
     document.addEventListener("click", e => {
-      const t = e.target && e.target.closest ? e.target.closest(".btn,.icon-btn,.action-btn,.dd-btn,.dd-opt,.vote-option,.modal-x,.pick-grid button,.tab-row button,.emote-bar button,.shop-item button,.chat-input button,.dev-buttons button,.gift-btn,.kick-btn,.duo-check") : null;
+      const t = e.target && e.target.closest ? e.target.closest(".btn,.icon-btn,.action-btn,.dd-btn,.dd-opt,.vote-option,.modal-x,.pick-grid button,.tab-row button,.emote-bar button,.shop-item button,.chat-input button,.dev-buttons button,.gift-btn,.kick-btn,.duo-check,.wallet-pill,details.how-card summary") : null;
       if (t && !t.disabled) this.playSound("click");
     });
     // music never plays to an empty room — stop it backgrounded
@@ -1038,6 +1133,18 @@ class Game {
           else if (ev.key === "Escape") { this.closeAllDropdowns(); btn.focus(); }
           else if (ev.key === "ArrowDown") { ev.preventDefault(); (li.nextElementSibling || li).focus(); }
           else if (ev.key === "ArrowUp") { ev.preventDefault(); (li.previousElementSibling || li).focus(); }
+          else if (ev.key === "Home") { ev.preventDefault(); list.firstElementChild?.focus(); }
+          else if (ev.key === "End") { ev.preventDefault(); list.lastElementChild?.focus(); }
+          else if (ev.key.length === 1) {
+            // typeahead: jump to the next option starting with the typed char
+            const ch = ev.key.toLowerCase();
+            const items = [...list.children];
+            const from = (items.indexOf(li) + 1) % items.length;
+            for (let i = 0; i < items.length; i++) {
+              const cand = items[(from + i) % items.length];
+              if ((cand.textContent || "").trim().toLowerCase().startsWith(ch)) { cand.focus(); break; }
+            }
+          }
         });
         list.appendChild(li);
       });
@@ -1100,19 +1207,44 @@ class Game {
     if (n > 0) this.playSound("coin");
   }
 
+  themeIsOwned(theme) {
+    if (theme === "dark" || theme === "light") return true;
+    const item = THEME_SHOP[theme];
+    return !!item && this.owned.includes(item);
+  }
+
   openShop() {
     this.closeAllDropdowns();
     this.updateWallet();
     const grid = this.$("shop-items");
-    grid.innerHTML = SHOP_ITEMS.map(it => {
+    const card = (it) => {
       const owned = this.owned.includes(it.id);
-      return `<div class="shop-item ${owned ? "owned" : ""}">
-        <div class="demo" style="background:var(--primary)"><i class="fa-solid ${it.kind === "frame" ? "fa-award" : "fa-palette"}"></i></div>
-        <strong>${this.escapeHtml(it.name)}</strong><span><i class="fa-solid fa-coins"></i> ${it.price}${owned ? " · owned" : ""}</span>
-        <button data-buy="${it.id}" ${owned ? "disabled" : ""}>${owned ? "Owned" : "Buy"}</button>
+      const equipped = it.kind === "frame" && this.avatar.frame === it.id;
+      const demoCls = it.kind === "frame" ? it.id : "";
+      const demoStyle = it.kind === "theme" && it.color
+        ? `background:${it.color}`
+        : `background:var(--primary)`;
+      let btn;
+      if (!owned) btn = `<button data-buy="${it.id}">Buy · ${it.price} <i class="fa-solid fa-coins"></i></button>`;
+      else if (it.kind === "frame") btn = equipped
+        ? `<button class="equipped" disabled><i class="fa-solid fa-check"></i> Equipped</button>`
+        : `<button data-equip="${it.id}">Equip</button>`;
+      else btn = `<button data-apply-theme="${it.theme}">Apply</button>`;
+      return `<div class="shop-item ${owned ? "owned" : ""} ${equipped ? "equipped-now" : ""}">
+        <div class="demo ${demoCls}" style="${demoStyle}"><i class="fa-solid ${it.kind === "frame" ? "fa-award" : "fa-palette"}"></i></div>
+        <strong>${this.escapeHtml(it.name)}</strong><span class="price"><i class="fa-solid fa-coins"></i> ${it.price}${owned ? " · owned" : ""}${equipped ? " · equipped" : ""}</span>
+        ${btn}
       </div>`;
-    }).join("");
+    };
+    const frames = SHOP_ITEMS.filter(i => i.kind === "frame").map(card).join("");
+    const themes = SHOP_ITEMS.filter(i => i.kind === "theme").map(card).join("");
+    grid.innerHTML = `<div class="shop-group-label"><i class="fa-solid fa-award"></i> Avatar frames</div>`
+      + `<div class="shop-grid">${frames}</div>`
+      + `<div class="shop-group-label"><i class="fa-solid fa-palette"></i> Themes</div>`
+      + `<div class="shop-grid">${themes}</div>`;
     grid.querySelectorAll("[data-buy]").forEach(b => { b.onclick = () => this.buyItem(b.dataset.buy); });
+    grid.querySelectorAll("[data-equip]").forEach(b => { b.onclick = () => this.equipFrame(b.dataset.equip); });
+    grid.querySelectorAll("[data-apply-theme]").forEach(b => { b.onclick = () => this.applyTheme(b.dataset.applyTheme, { allowLocked: true }); });
     this.$("shop-modal").classList.remove("hidden");
     this.focusModal("shop-modal");
   }
@@ -1124,11 +1256,27 @@ class Game {
     this.coins -= it.price;
     this.owned.push(id);
     store.set("spy_owned", JSON.stringify(this.owned));
-    if (it.kind === "theme" && it.theme) this.applyTheme(it.theme);
+    if (it.kind === "frame") this.equipFrame(it.id, true);
+    if (it.kind === "theme" && it.theme) this.applyTheme(it.theme, { allowLocked: true });
+    this.buildThemeOptions();
     this.updateWallet();
     this.playSound("success");
     this.toast(`${it.name} unlocked!`, "success");
     this.openShop();
+  }
+
+  equipFrame(id, silent) {
+    // shop <-> avatar builder stay in sync: one frame, saved + broadcast
+    if (!this.owned.includes(id) && id !== "frame-none") return;
+    this.avatar = this.sanitizeAvatar({ ...this.avatar, frame: id });
+    store.set(AVATAR_KEY, JSON.stringify(this.avatar));
+    this.renderPlayers();
+    this.broadcastAvatar();
+    if (!silent) {
+      this.playSound("success");
+      this.toast("Frame equipped — see it in the avatar builder too", "success");
+      this.openShop();
+    }
   }
 
   avatarHtml(p, size = 36) {
@@ -1241,12 +1389,26 @@ class Game {
     this.toast(`Sent ${amount} coins`, "success");
   }
 
-  routeGift(d) {
-    // host relays to recipient; recipient credits locally
-    if (d.to === this.myId) { this.earnCoins(d.amount); this.playSound("gift-receive"); this.addSystemMessage(`${d.fromName} sent you ${d.amount} coins!`); return; }
-    const conn = this.connections.get(d.to);
-    if (conn) this.sendTo(conn, d);
-    this.addSystemMessage(`${d.fromName} gifted ${d.amount} coins.`);
+  routeGift(d, conn) {
+    // host relays to recipient; recipient credits locally.
+    // Never trust client amounts — validate type/range/target/sender here.
+    const senderId = (conn && conn.peer) || d.from;
+    const amount = Number(d.amount);
+    if (!Number.isFinite(amount) || !Number.isInteger(amount) || amount < 5 || amount > 500) return;
+    if (typeof d.to !== "string" || !this.players.some(p => p.id === d.to)) return;
+    if (typeof senderId !== "string" || !this.players.some(p => p.id === senderId)) return;
+    // cheap rate limit: one gift per sender per 2s (forged floods die here)
+    const now = Date.now();
+    this._giftAt = this._giftAt || {};
+    if (now - (this._giftAt[senderId] || 0) < 2000) return;
+    this._giftAt[senderId] = now;
+    const sender = this.players.find(p => p.id === senderId);
+    const fromName = sender ? sender.name : String(d.fromName || "Someone").slice(0, 16);
+    const clean = { type: "gift", from: senderId, fromName, to: d.to, amount, msgId: String(d.msgId || `${senderId}-${now}-gift`).slice(0, 64) };
+    if (clean.to === this.myId) { this.earnCoins(clean.amount); this.playSound("gift-receive"); this.addSystemMessage(`${fromName} sent you ${clean.amount} coins!`); return; }
+    const target = this.connections.get(clean.to);
+    if (target) this.sendTo(target, clean);
+    this.addSystemMessage(`${fromName} gifted ${clean.amount} coins.`);
   }
 
   sendPrompt() {
@@ -1316,6 +1478,11 @@ class Game {
 
   callAllPeers() {
     if (!this.voiceOn || !this.localStream) return;
+    // roster pushes fire per join — debounce so one flapping peer can't
+    // trigger a call storm across the mesh
+    const now = Date.now();
+    if (now - (this._lastCallAll || 0) < 2000) return;
+    this._lastCallAll = now;
     const targets = this.players.map(p => p.id).filter(id => id && id !== this.myId && !id.startsWith("bot-"));
     targets.forEach(pid => {
       if (this.voiceCalls.has(pid)) return;
@@ -1379,6 +1546,10 @@ class Game {
   // ---------- confetti celebration ----------
   launchConfetti(n = 130) {
     if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    // small/slow screens get half the particles — same look, far less paint
+    try {
+      if (innerWidth < 480 || matchMedia("(update: slow)").matches) n = Math.ceil(n / 2);
+    } catch (e) {}
     try { if (this.confettiRAF) cancelAnimationFrame(this.confettiRAF); } catch (e) {}
     if (this._confettiResize) { try { window.removeEventListener("resize", this._confettiResize); } catch (e) {} }
     const cv = this.$("confetti");
@@ -1520,8 +1691,8 @@ class Game {
     if (!this.devMode) return;
     const panel = this.$("dev-panel");
     if (panel && panel.classList.contains("hidden")) return;
-    const spy = this.isHost
-      ? (this.players.find(p => p.id === this.spyId)?.name || "—")
+    const spyNames = this.isHost
+      ? (this.spyIds.map(id => this.players.find(p => p.id === id)?.name || id.slice(0, 6)).join(", ") || "—")
       : (this.isSpy ? `${this.myName} (you)` : "hidden — you are not host");
     const loc = this.isHost ? (this.location || "—") : (this.isSpy ? "(hidden from spy)" : (this.location || "—"));
     this.$("dev-state").innerHTML = `
@@ -1529,10 +1700,12 @@ class Game {
       <div>Round: <strong>${this.round}</strong></div>
       <div>Players: <strong>${this.players.length}</strong></div>
       <div>Role: <strong>${this.isHost ? "HOST" : "GUEST"}${this.isSpy ? " + SPY" : ""}</strong></div>
-      <div class="wide">Spy: <strong>${this.escapeHtml(spy)}</strong></div>
+      <div class="wide">Spies: <strong>${this.escapeHtml(spyNames)}</strong></div>
       <div class="wide">Location: <strong>${this.escapeHtml(loc)}</strong></div>
       <div>Conns: <strong>${this.connections.size}</strong></div>
       <div>Votes: <strong>${Object.keys(this.votes).length}/${this.realPlayers().length}</strong></div>
+      <div>Sync: <strong>${typeof this._lastSyncSeq === "number" ? `#${this._lastSyncSeq}` : (this.isHost ? `out #${this._syncSeq || 0}` : "—")}</strong></div>
+      <div>Coins: <strong>${this.coins}</strong></div>
       <div class="wide">Room: <strong>${this.escapeHtml(this.roomCode || "—")}</strong> · Me: <strong>${this.escapeHtml(this.myName || "—")}</strong></div>
     `;
   }
@@ -1677,6 +1850,67 @@ class Game {
     this.devLog("+500 coins locally.");
   }
 
+  devSetCoins() {
+    const v = (prompt("Set your coin balance (0–99999)", String(this.coins)) || "").trim();
+    if (v === "") return;
+    const n = Math.min(99999, Math.max(0, parseInt(v, 10)));
+    if (!Number.isFinite(n)) return this.devLog("Not a number.");
+    this.coins = n;
+    this.updateWallet();
+    this.toast(`CHEAT: coins = ${n} (local)`, "success");
+    this.devLog(`Coins set to ${n} locally.`);
+  }
+
+  devSetScore() {
+    const v = (prompt("Set your score (host: broadcasts, guest: local until next tally)", "10") || "").trim();
+    if (v === "") return;
+    const n = Math.min(999, Math.max(0, parseInt(v, 10)));
+    if (!Number.isFinite(n)) return this.devLog("Not a number.");
+    const me = this.players.find(p => p.id === this.myId);
+    if (!me) return this.devLog("Not in a room.");
+    me.score = n;
+    if (this.isHost) this.broadcast({ type: "players", players: this.players, category: this.category, mode: this.mode });
+    this.renderPlayers();
+    this.toast(`CHEAT: score = ${n}${this.isHost ? "" : " (local)"}`, "success");
+    this.devLog(`Score set to ${n}.`);
+  }
+
+  devSetStreak() {
+    const v = (prompt("Set your win streak (0–999)", String(this.streak)) || "").trim();
+    if (v === "") return;
+    const n = Math.min(999, Math.max(0, parseInt(v, 10)));
+    if (!Number.isFinite(n)) return this.devLog("Not a number.");
+    this.streak = n;
+    this.bestStreak = Math.max(this.bestStreak, n);
+    store.set("spy_streak", String(this.streak));
+    store.set("spy_best", String(this.bestStreak));
+    this.renderStreak();
+    this.toast(`CHEAT: streak = ${n}`, "success");
+    this.devLog(`Streak set to ${n}.`);
+  }
+
+  devRigSpy() {
+    if (this.phase === "lobby") return this.devLog("Start the game first.");
+    const names = this.realPlayers().map(p => p.name).join(", ") || "nobody";
+    const v = (prompt(`Make who the spy? (${names})`, "") || "").trim().toLowerCase();
+    if (!v) return;
+    const target = this.realPlayers().find(p => p.name.toLowerCase() === v || p.id.toLowerCase() === v);
+    if (!target) return this.devLog("No match among humans (bots can't be spies).");
+    if (this.isHost) {
+      const want = this.mode === "double" && this.realPlayers().length >= 6 ? 2 : 1;
+      this.spyIds = [target.id, ...this.spyIds.filter(id => id !== target.id)].slice(0, want);
+      this.spyId = this.spyIds[0];
+      this.isSpy = this.spyIds.includes(this.myId);
+      this.showRole(); this.updatePhaseUI(); this.renderPlayers();
+      this.playSound("reveal");
+      this.toast(`CHEAT: ${target.name} is now the spy`, "success");
+      this.devBroadcastSpy("Rig spy.");
+    } else {
+      this.devLog(`${target.name} marked locally — host truth unchanged. Guests can't rig the room; use Spoof spy UI to preview spy flows.`);
+      this.toast("CHEAT (local only): rigging needs host", "error");
+    }
+  }
+
   devUnlockAll() {
     SHOP_ITEMS.forEach(it => { if (!this.owned.includes(it.id)) this.owned.push(it.id); });
     store.set("spy_owned", JSON.stringify(this.owned));
@@ -1773,6 +2007,7 @@ class Game {
 
     this.peer.on("open", id => {
       this.myId = id;
+      this._createTries = 0;
       this.players = [];
       this.addPlayer({ id, name: this.myName, isHost: true, score: 0, color: COLORS[0], avatar: this.avatar });
       this.showHostLobby();
@@ -1790,7 +2025,14 @@ class Game {
       console.error(err);
       this.$("create-btn").disabled = false;
       if (err && err.type === "unavailable-id") {
-        // code taken on the public cloud — drop the claimed peer, retry fresh
+        // code taken on the public cloud — drop the claimed peer, retry fresh (capped)
+        this._createTries = (this._createTries || 0) + 1;
+        if (this._createTries > 3) {
+          this._createTries = 0;
+          this.setStatus("Error", false);
+          this.toast("Cloud busy — wait a beat, then Create again.", "error");
+          return;
+        }
         try { if (this.peer) this.peer.destroy(); } catch (e) {}
         this.peer = null;
         this.roomCode = this.generateCode();
@@ -1860,11 +2102,16 @@ class Game {
       }
       this.peer = peer;
       this.peer.on("call", call => this.handleIncomingCall(call));
+      // guests heal signaling drops just like the host does
+      this.peer.on("disconnected", () => { try { if (!this.peer.destroyed) this.peer.reconnect(); } catch (e) {} });
       this.peer.on("error", err => {
         if (this.joinAttempt !== attempt) return;
         console.error(err);
         clearTimeout(failTimer);
-        if (err && err.type === "peer-unavailable") retry("Room not found yet");
+        const t = err && err.type;
+        // near-fatal ICE/socket errors hang to the 12s watchdog otherwise —
+        // fold them into the normal retry path with backoff
+        if (t === "peer-unavailable" || t === "network" || t === "socket-error" || t === "socket-closed" || t === "webrtc") retry(t === "peer-unavailable" ? "Room not found yet" : "Network hiccup");
         else {
           this.joining = false;
           this.$("join-btn").disabled = false;
@@ -1887,12 +2134,17 @@ class Game {
       if (this.joinAttempt !== attempt) { clearTimeout(failTimer); return; }
       this.myId = this.peer.id;
       if (!this.myId) { setTimeout(doConnect, 300); return; }
+      // tear down the live conn AND any in-flight dial before redialing —
+      // half-open duplicates each deliver join and double-count the roster
       try { const old = this.connections.get("host"); if (old) { try { old.close(); } catch (e) {} } } catch (e) {}
+      try { if (this._pendingConn) { try { this._pendingConn.close(); } catch (e) {} } } catch (e) {}
+      this._pendingConn = null;
       this.connections.delete("host");
       let conn;
       try { conn = this.peer.connect(this.peerIdFor(code), { reliable: true }); } catch (e) { conn = null; }
       if (!conn) { clearTimeout(failTimer); this.joining = false; this.$("join-btn").disabled = false; return this.toast("Could not connect", "error"); }
-      this.handleConnection(conn, () => { done = true; clearTimeout(failTimer); this.joining = false; this.$("join-btn").disabled = false; });
+      this._pendingConn = conn;
+      this.handleConnection(conn, () => { done = true; this._pendingConn = null; clearTimeout(failTimer); this.joining = false; this.$("join-btn").disabled = false; });
     };
 
     if (peer.open) doConnect();
@@ -1913,6 +2165,12 @@ class Game {
         this.connections.set("host", conn);
         this.sendTo(conn, { type: "join", id: this.myId, name: this.myName, avatar: this.avatar });
         this.setStatus(`Connected · ${this.roomCode}`, true);
+        this._lastSyncAt = Date.now();
+        // host-death detector: pagehide hostLeft can't flush on mobile, so a
+        // missed-heartbeat watchdog (2x the 3s interval + slack) tells guests
+        this.startSyncWatch();
+        // flush anything queued while the channel was down
+        this.flushOutbox();
       }
       if (onOpen) onOpen();
       if (this.devMode) this.updateDevPanel();
@@ -2126,8 +2384,14 @@ class Game {
         break;
       }
       case "gift":
-        if (this.isHost) this.routeGift(data);
-        else if (data.to === this.myId) { this.earnCoins(data.amount); this.playSound("gift-receive"); this.addSystemMessage(`${data.fromName} sent you ${data.amount} coins!`); this.toast(`+${data.amount} coins from ${data.fromName}!`, "success"); }
+        if (this.isHost) this.routeGift(data, conn);
+        else if (data.to === this.myId) {
+          // guests only credit host-relayed gifts (host already validated);
+          // forged direct amounts outside 5..500 die here
+          const amt = Number(data.amount);
+          if (!Number.isInteger(amt) || amt < 5 || amt > 500) break;
+          this.earnCoins(amt); this.playSound("gift-receive"); this.addSystemMessage(`${String(data.fromName || "Someone").slice(0, 16)} sent you ${amt} coins!`); this.toast(`+${amt} coins from ${String(data.fromName || "Someone").slice(0, 16)}!`, "success");
+        }
         break;
       case "voice-state": {
         const p = this.players.find(x => x.id === data.id);
@@ -2185,6 +2449,10 @@ class Game {
     this.players = this.players.filter(p => p.id !== pid);
     delete this.votes[pid];
     Object.keys(this.votes).forEach(voter => { if (this.votes[voter] === pid) delete this.votes[voter]; });
+    if (this.spyIds.includes(pid)) {
+      this.spyIds = this.spyIds.filter(id => id !== pid);
+      this.spyId = this.spyIds[0] || null;
+    }
     this.broadcast({ type: "players", players: this.players });
         this.renderPlayers();
         this.setStatus(`Hosting · ${this.roomCode} · ${this.players.length}`, true);
@@ -2213,13 +2481,52 @@ class Game {
 
   sendToHost(data) {
     const host = this.connections.get("host");
-    if (host && host.open) { try { host.send(data); } catch (e) {} }
+    if (host && host.open) { try { host.send(data); return; } catch (e) {} }
+    // channel down mid-reconnect: queue (cap 20) instead of silently dropping
+    // votes/guesses/chat — flushed on reconnect
+    try {
+      this._outbox = this._outbox || [];
+      if (this._outbox.length < 20) this._outbox.push(data);
+    } catch (e) {}
+  }
+
+  flushOutbox() {
+    try {
+      const host = this.connections.get("host");
+      if (!host || !host.open || !this._outbox || !this._outbox.length) return;
+      const q = this._outbox;
+      this._outbox = [];
+      q.forEach(d => { try { host.send(d); } catch (e) {} });
+    } catch (e) {}
+  }
+
+  startSyncWatch() {
+    try {
+      if (this._syncWatch) return;
+      this._syncWatch = setInterval(() => {
+        try {
+          if (this.isHost || !this.roomCode || this.phase === "lobby") return;
+          if (!this._lastSyncAt || this._syncSilentWarned) return;
+          if (Date.now() - this._lastSyncAt > 9000) {
+            this._syncSilentWarned = true;
+            this.toast("Host silent — they may have closed the tab", "error");
+          }
+        } catch (e) {}
+      }, 4000);
+    } catch (e) {}
+  }
+
+  stopSyncWatch() {
+    try { if (this._syncWatch) clearInterval(this._syncWatch); } catch (e) {}
+    this._syncWatch = null;
   }
 
   // ---------- realtime sync (host heartbeat, public state only — never secrets) ----------
   syncPayload() {
+    this._syncSeq = (this._syncSeq || 0) + 1;
     return {
       type: "sync",
+      seq: this._syncSeq,
       phase: this.phase,
       time: this.timeLeft,
       endsAt: this.endsAt || 0,
@@ -2242,8 +2549,26 @@ class Game {
 
   stopSync() { if (this.syncInterval) clearInterval(this.syncInterval); this.syncInterval = null; }
 
+  // wall-clock deadlines from the host: clamp so a skewed guest clock
+  // (minutes off) can't yield 0s skips or hour-long timers
+  applyEndsAt(endsAt) {
+    if (typeof endsAt !== "number" || !(endsAt > 0)) return false;
+    this.endsAt = endsAt;
+    this.timeLeft = Math.min(600, Math.max(0, Math.ceil((endsAt - Date.now()) / 1000)));
+    this.updateTimer();
+    return true;
+  }
+
   applySync(data) {
     if (this.isHost || !data) return;
+    // heartbeats can arrive reordered on flaky nets — stale sync must not
+    // regress a newer phase back to an older one
+    if (typeof data.seq === "number") {
+      if (typeof this._lastSyncSeq === "number" && data.seq <= this._lastSyncSeq) return;
+      this._lastSyncSeq = data.seq;
+    }
+    this._lastSyncAt = Date.now();
+    this._syncSilentWarned = false;
     if (typeof data.round === "number" && data.round > 0) this.round = data.round;
     if (data.category && CATEGORIES[data.category]) { this.category = data.category; this.setSelect(this.$("category-select"), data.category); }
     if (data.mode && MODES[data.mode]) { this.mode = data.mode; this.setSelect(this.$("mode-select"), data.mode); }
@@ -2256,21 +2581,22 @@ class Game {
     if (data.phase && data.phase !== this.phase && data.phase !== "lobby") {
       const prev = this.phase;
       this.phase = data.phase;
-      if (typeof data.endsAt === "number" && data.endsAt > 0) {
-        this.endsAt = data.endsAt;
-        this.timeLeft = Math.max(0, Math.ceil((data.endsAt - Date.now()) / 1000));
-        this.updateTimer();
-      } else if (typeof data.time === "number") { this.timeLeft = data.time; this.updateTimer(); }
+      if (!this.applyEndsAt(data.endsAt) && typeof data.time === "number") { this.timeLeft = Math.min(600, Math.max(0, data.time)); this.updateTimer(); }
       this.updatePhaseUI();
       this.renderPlayers();
       if (data.phase === "vote" && prev !== "vote") { this.myVote = null; this.openVoteModal(); }
-    } else if (typeof data.endsAt === "number" && data.endsAt > 0 && this.phase !== "lobby") {
-      this.endsAt = data.endsAt;
-      this.timeLeft = Math.max(0, Math.ceil((data.endsAt - Date.now()) / 1000));
-      this.updateTimer();
-    } else if (typeof data.time === "number" && this.phase !== "lobby") {
-      this.timeLeft = data.time;
-      this.updateTimer();
+    } else if (this.phase !== "lobby") {
+      this.applyEndsAt(data.endsAt);
+      if (typeof data.endsAt !== "number" && typeof data.time === "number") {
+        this.timeLeft = Math.min(600, Math.max(0, data.time));
+        this.updateTimer();
+      }
+      // backgrounded through the vote transition: phase already matches, so
+      // the branch above never fires — re-assert the ballot UI on return
+      if (data.phase === "vote" && this.myVote == null && !this.waitingForNext
+        && document.hidden === false && this.$("vote-modal").classList.contains("hidden")) {
+        this.openVoteModal();
+      }
     }
     if (typeof data.count === "number") this.renderVoteProgress(data.count, data.total || 0);
     this.renderPlayers();
@@ -2330,7 +2656,7 @@ class Game {
     if (panel) {
       panel.innerHTML = this.players.map(p => `
         <div class="player-chip ${p.id === this.myId ? "you" : ""}">
-          <span class="cdot" style="background:${this.escapeHtml(p.color || "#7c5cfc")}"></span>
+          <span class="cdot" style="background:${this.validColor(p.color || "#7c5cfc")}"></span>
           <span>${this.escapeHtml(p.name)}${p.id === this.myId ? " (you)" : ""}</span>
           ${p.voice ? `<span class="mic"><i class="fa-solid fa-microphone"></i></span>` : ""}
         </div>`).join("");
@@ -2354,6 +2680,14 @@ class Game {
     // locked out of a tally that discards their vote
     delete this.votes[pid];
     Object.keys(this.votes).forEach(voter => { if (this.votes[voter] === pid) delete this.votes[voter]; });
+    // a kicked/left spy must not haunt the round — strip them from spyIds
+    // or the vote can never catch anyone and the round auto-escapes
+    if (this.spyIds.includes(pid)) {
+      this.spyIds = this.spyIds.filter(id => id !== pid);
+      this.spyId = this.spyIds[0] || null;
+      if (this.isHost && this.spyIds.includes(this.myId)) this.isSpy = true;
+      else if (pid === this.myId) this.isSpy = false;
+    }
     this.broadcast({ type: "players", players: this.players });
     this.renderPlayers();
     this.setStatus(`Hosting · ${this.roomCode} · ${this.players.length}`, true);
@@ -2435,7 +2769,8 @@ class Game {
       this.sendTo(conn, {
         type,
         isSpy,
-        spyIds: [],
+        // co-spies learn each other (teammates only) — citizens get []
+        spyIds: isSpy ? [...this.spyIds] : [],
         location: isSpy ? null : this.location,
         round: this.round,
         category: this.category,
@@ -2498,7 +2833,9 @@ class Game {
   }
 
   startDiscussion() {
-    if (!this.isHost || (this.phase !== "role" && this.phase !== "lobby")) return;
+    // role -> discuss only: a lobby discuss would run with no spies/location
+    if (!this.isHost || this.phase !== "role") return;
+    if (!this.spyIds.length || !this.location) return;
     this.phase = "discuss";
     const secs = (MODES[this.mode] && MODES[this.mode].discuss) || this.discussTime;
     this.endsAt = Date.now() + secs * 1000;
@@ -2723,9 +3060,11 @@ class Game {
       if (myGain > 0) this.earnCoins(myGain * 10 + (won ? 10 : 0));
     }
     // personal streak: spies win by escaping, citizens win by catching the
-    // spy without voting a fellow citizen (skip/AFK still shares a team win)
+    // spy without voting a fellow citizen. Skip/AFK earns nothing — you must
+    // have actually voted a spy to share the win.
+    const myVoteHit = this.myVote && this.myVote !== "__skip" && (data.spyIds || []).includes(this.myVote);
     const votedCitizen = this.myVote && this.myVote !== "__skip" && !(data.spyIds || []).includes(this.myVote);
-    const wonRound = this.isSpy ? !data.spyCaught : (!!data.spyCaught && !votedCitizen);
+    const wonRound = this.isSpy ? !data.spyCaught : (!!data.spyCaught && !!myVoteHit && !votedCitizen);
     if (wonRound) {
       this.streak++;
       this.bestStreak = Math.max(this.bestStreak, this.streak);
@@ -2768,9 +3107,18 @@ class Game {
 
   filterGuess(q) {
     const needle = q.trim().toLowerCase();
+    let shown = 0, total = 0;
     this.$("guess-options").querySelectorAll(".vote-option").forEach(el => {
-      el.style.display = !needle || el.dataset.loc.toLowerCase().includes(needle) ? "" : "none";
+      total++;
+      const hit = !needle || el.dataset.loc.toLowerCase().includes(needle);
+      el.style.display = hit ? "" : "none";
+      if (hit) shown++;
     });
+    // screen readers hear the result count; empty filter is perceivable
+    const box = this.$("guess-options");
+    if (box) box.setAttribute("aria-label", `Guess the location (${shown} of ${total} shown)`);
+    const search = this.$("guess-search");
+    if (search) search.setAttribute("aria-expanded", needle ? "true" : "false");
   }
 
   submitGuess() {
@@ -2796,10 +3144,9 @@ class Game {
     if (!this.spyIds.includes(spyConnId)) return;
     const correct = guess === this.location;
     if (correct) {
-      this.spyIds.forEach(id => {
-        const spy = this.players.find(p => p.id === id);
-        if (spy) spy.score = (spy.score || 0) + 3;
-      });
+      // only the spy who actually guessed scores — co-spies don't ride along
+      const guesser = this.players.find(p => p.id === spyConnId);
+      if (guesser) guesser.score = (guesser.score || 0) + 3;
     }
     const results = {
       type: "results",
@@ -2824,6 +3171,9 @@ class Game {
   nextRound() {
     if (!this.isHost) return;
     if (this.realPlayers().length < MIN_PLAYERS) return this.toast(`Need ${MIN_PLAYERS} players`, "error");
+    // players may have left since round 1 — re-check the Double-Spy gate
+    // instead of silently dealing a 1-spy round in double mode
+    if (this.mode === "double" && this.realPlayers().length < 6) return this.toast("Double Spy needs 6+ players — switch mode or wait for more", "error");
     this.hideResults();
     this.round++;
     this.pickNewRound();
@@ -2858,6 +3208,9 @@ class Game {
     this.round = 1;
     this.votes = {}; this.myVote = null; this.spyGuess = null;
     this.chatHistory = [];
+    // clear round secrets so an ex-spy sees nothing stale in the lobby
+    this.spyIds = []; this.spyId = null; this.isSpy = false; this.location = "";
+    this.endsAt = 0; this.timeLeft = 0; this.roleEndsAt = 0;
     this.players.forEach(p => { p.score = 0; });
     this.waitingForNext = false;
     this.broadcast({ type: "toLobby", players: this.players, roomCode: this.roomCode });
@@ -2870,6 +3223,8 @@ class Game {
   }
 
   showLobbyScreen() {
+    // a deferred SW update waits for a safe moment — lobby is that moment
+    if (window._swUpdatePending) { try { window.location.reload(); return; } catch (e) {} }
     this.$("game").classList.remove("active");
     this.$("lobby").classList.add("active");
     this.$("join-section").classList.add("hidden");
@@ -2936,7 +3291,11 @@ class Game {
       // fire onEnd at the right moment instead of drifting late
       this.timeLeft = Math.max(0, Math.ceil((this.endsAt - Date.now()) / 1000));
       this.updateTimer();
-      this.broadcast({ type: "timer", time: this.timeLeft, endsAt: this.endsAt });
+      // guests already recompute from endsAt — refresh them every 5s, not
+      // every tick, to cut per-second room-wide spam
+      if (this.timeLeft <= 0 || this.timeLeft % 5 === 0) {
+        this.broadcast({ type: "timer", time: this.timeLeft, endsAt: this.endsAt });
+      }
       if (this.timeLeft <= 5 && this.timeLeft > 0) this.playSound("tick");
       if (this.timeLeft <= 0) {
         clearInterval(this.timerInterval);
@@ -2957,23 +3316,32 @@ class Game {
   }
 
   updatePhaseUI() {
-    const labels = {
-      lobby: ["fa-ticket", "Lobby"], role: ["fa-eye", "Role Reveal"],
-      discuss: ["fa-comments", "Discussion"], vote: ["fa-check-to-slot", "Voting"],
-      reveal: ["fa-flag", "Results"], spyguess: ["fa-map-location-dot", "Spy Guessing"]
-    };
-    const [icon, label] = labels[this.phase] || ["fa-gamepad", this.phase];
-    this.$("phase-label").innerHTML = `<i class="fa-solid ${icon}"></i> <span id="phase-text">${this.escapeHtml(label)}</span>`;
-    this.$("round-label").innerHTML = `<i class="fa-solid fa-rotate"></i> R${this.round}`;
-    const order = ["role", "discuss", "vote", "reveal"];
-    const idx = order.indexOf(this.phase === "spyguess" ? "vote" : this.phase);
-    const fill = this.$("quest-fill");
-    if (fill) fill.style.width = idx < 0 ? "0%" : `${(idx / (order.length - 1)) * 100}%`;
-    document.querySelectorAll("#quest-nodes .qnode").forEach(n => {
-      const ni = order.indexOf(n.dataset.ph);
-      n.classList.toggle("done", idx >= 0 && ni < idx);
-      n.classList.toggle("now", idx >= 0 && ni === idx);
-    });
+    // cached nodes + change guard: no full innerHTML churn per call
+    const sig = `${this.phase}|${this.round}`;
+    if (sig !== this._phaseSig) {
+      this._phaseSig = sig;
+      this._phaseNodes = this._phaseNodes || {};
+      const labels = {
+        lobby: ["fa-ticket", "Lobby"], role: ["fa-eye", "Role Reveal"],
+        discuss: ["fa-comments", "Discussion"], vote: ["fa-check-to-slot", "Voting"],
+        reveal: ["fa-flag", "Results"], spyguess: ["fa-map-location-dot", "Spy Guessing"]
+      };
+      const [icon, label] = labels[this.phase] || ["fa-gamepad", this.phase];
+      const pl = this._phaseNodes.label || (this._phaseNodes.label = this.$("phase-label"));
+      if (pl) pl.innerHTML = `<i class="fa-solid ${icon}"></i> <span id="phase-text">${this.escapeHtml(label)}</span>`;
+      const rl = this._phaseNodes.round || (this._phaseNodes.round = this.$("round-label"));
+      if (rl) rl.innerHTML = `<i class="fa-solid fa-rotate"></i> R${this.round}`;
+      const order = ["role", "discuss", "vote", "reveal"];
+      const idx = order.indexOf(this.phase === "spyguess" ? "vote" : this.phase);
+      const fill = this._phaseNodes.fill || (this._phaseNodes.fill = this.$("quest-fill"));
+      if (fill) fill.style.width = idx < 0 ? "0%" : `${(idx / (order.length - 1)) * 100}%`;
+      const nodes = this._phaseNodes.q || (this._phaseNodes.q = [...document.querySelectorAll("#quest-nodes .qnode")]);
+      nodes.forEach(n => {
+        const ni = order.indexOf(n.dataset.ph);
+        n.classList.toggle("done", idx >= 0 && ni < idx);
+        n.classList.toggle("now", idx >= 0 && ni === idx);
+      });
+    }
     this.updateTimer();
   }
 
@@ -2997,6 +3365,8 @@ class Game {
   renderLobbyChat() {
     const box = this.$("lobby-chat-messages");
     if (!box) return;
+    // same near-bottom guard as the game chat — no forced scroll-jump
+    const nearBottom = (box.scrollHeight - box.scrollTop - box.clientHeight) < 80;
     box.innerHTML = this.chatHistory.slice(-30).map(m => {
       if (m.sys) return `<div class="chat-msg sys"><i class="fa-solid fa-circle-info"></i> ${this.escapeHtml(m.message)}</div>`;
       return `<div class="chat-msg ${m.isOwn ? "own" : "other"}">
@@ -3004,7 +3374,7 @@ class Game {
         ${this.escapeHtml(m.message)}
       </div>`;
     }).join("");
-    box.scrollTop = box.scrollHeight;
+    if (nearBottom) box.scrollTop = box.scrollHeight;
   }
   sendChat(text) {
     const input = this.$("chat-input");
@@ -3075,8 +3445,13 @@ window.addEventListener("load", () => {
   try {
     const qs = new URLSearchParams(location.search);
     const host = location.hostname || "";
+    // dev = loopback + LAN test nets + single-label names: none of these is
+    // the production host, and all reproduce the stopped-server ghost load
     const isLocalDev = host === "localhost" || host === "127.0.0.1" || host === "::1"
-      || host.endsWith(".localhost") || host.endsWith(".local");
+      || host === "0.0.0.0" || host === "[::1]"
+      || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".test")
+      || host === "test" || host.indexOf(".") === -1
+      || /^192\.168\./.test(host) || /^10\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host);
     if (isLocalDev || qs.has("nosw")) {
       try {
         if ("serviceWorker" in navigator) {
@@ -3111,13 +3486,23 @@ window.addEventListener("load", () => {
           });
         } catch (e) {}
       }).catch(() => {});
-      // New SW took over — reload once to run the fresh shell.
+      // New SW took over — reload once, but never mid-room: a deploy that
+      // activates mid-discuss/vote would wipe the live P2P room.
       try {
         let reloaded = false;
         navigator.serviceWorker.addEventListener("controllerchange", () => {
           if (reloaded) return;
           reloaded = true;
-          try { window.location.reload(); } catch (e) {}
+          try {
+            const g = window.game;
+            const inRoom = g && g.roomCode && g.phase && g.phase !== "lobby";
+            if (inRoom) {
+              window._swUpdatePending = true;
+              if (g.toast) g.toast("Update ready — applies when you return to lobby", "success");
+            } else {
+              window.location.reload();
+            }
+          } catch (e) { try { window.location.reload(); } catch (e2) {} }
         });
       } catch (e) {}
     }
