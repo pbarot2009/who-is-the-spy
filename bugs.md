@@ -285,3 +285,20 @@ Stale cache (fix invisible + ghost load with server stopped):
 
 One-time cleanup (old `spy-v13`/`spy-v14` still in your browser):
 - DevTools → Application → Storage → Clear site data for the localhost origin, then hard reload. Or load once with `?nosw=1`, which purges the ghosts and skips the worker.
+
+# round 14 — spy guess, guest leave, micro polish (v17)
+
+Spy guess (was: modal opened behind the results overlay, early taps got a bare toast):
+1. [fixed] Guess modal sat under the results overlay (both z-200, results later in DOM) — spy could never reach it. `#guess-modal` is z-250 now, and the results card carries its own "Guess the location (+3)" button for the escaped spy instead of a 900ms auto-open fighting the overlay.
+2. [fixed] Guess button gave no feedback mid-round — it now toasts why (Hardcore off / opens after the vote / already submitted), and `openGuessModal` guards the same so dev-forced calls can't skip the queue.
+3. [fixed] Host `guessSubmitted` flag blocked the second spy in Double Spy mode — host truth is one-guess-per-spy (`guessedSpies` set, reset each round), duplicates/forged senders still rejected.
+
+Leave / end game (was: guests stuck on results with an End Game button that only toasted):
+4. [fixed] Round results: guests get Leave Room (host keeps End Game). Finals: guests get Leave Room + Ask Host: Lobby (host keeps Back to Lobby). Host-left screen hides the spare button.
+5. [fixed] Guest leave was destroy-and-hope — now sends a best-effort `leave` first so the host drops the row at once; host handles it like a disconnect (votes cleared, spy-left and vote-close paths run).
+6. [fixed] Host killing a live room with one stray tap — confirm step when peers are connected mid-game.
+
+UI micro polish (append-only block at the end of styles.css, no existing rules touched):
+7. [fixed] Modal titles ran under the absolute X — 48px right padding. Player-rail chip lips clipped by 2px rail padding — 4px/8px now. Role banner breathed off the rail (2px → 8px). Header holds on 320px (phase truncates, timer/round pinned). Kick/gift buttons hit 44px. Score rows clip long names instead of pushing points out. Code inputs optically re-centered. Bumped `?v=17` (index.html ×2, lobby wav, APP_VERSION, SW shell).
+
+8. [fixed] Results screen showed the location to everyone, so the escaped spy's +3 guess was free — the location row now renders "??? (hidden until you guess)" for a spy with a pending guess, and reveals after they submit. Citizens always see it. UI-level fairness only (the packet still carries it). Bumped `?v=18`.

@@ -2814,3 +2814,79 @@ select.native-hidden {
     -webkit-backdrop-filter: none;
   }
 }
+
+/* ---------- Round 14 micro-polish: spacing + clipped borders ---------- */
+/* Guess modal must sit above the results overlay (200), below dev (300). */
+#guess-modal {
+  z-index: 250;
+}
+
+/* Modal titles ran under the absolute close button. */
+.modal-content h2,
+.results-card h2 {
+  padding-right: 48px;
+}
+
+/* Chip lips (3px shadow + 2px border) were sliced by the 2px rail padding. */
+.players-panel {
+  padding: 4px 4px 8px;
+  scroll-padding: 4px;
+}
+
+/* Banner sat almost flush against the player rail. */
+.role-banner {
+  margin-bottom: 8px;
+}
+
+/* Narrow phones squeezed the header: phase truncates, timer/round hold. */
+.phase {
+  min-width: 0;
+  flex-shrink: 1;
+}
+
+.phase span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.timer,
+.round {
+  flex-shrink: 0;
+}
+
+/* Both lobby icon buttons hit the 44px touch target. */
+.kick-btn,
+.gift-btn {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+/* Long names pushed the points pill out of the row. */
+.score-row .sname {
+  overflow: hidden;
+  overflow-wrap: break-word;
+}
+
+.score-row .pts {
+  flex-shrink: 0;
+}
+
+/* Letter-spaced code inputs drift left; indent re-centers them. */
+.code-input {
+  text-indent: 4px;
+}
+
+/* Option lists + sheets keep breathing room while scrolling. */
+.vote-options {
+  scroll-padding: 8px;
+}
+
+.modal-content,
+.results-card {
+  scroll-padding-bottom: 24px;
+}
+
+/* In-results spy guess button spacing. */
+#results-guess-btn {
+  margin-top: 12px;
+}

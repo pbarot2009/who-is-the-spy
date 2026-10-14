@@ -335,6 +335,7 @@ class Game {
     this.votes = {};
     this.spyGuess = null;
     this.guessSubmitted = false;
+    this.guessedSpies = new Set();
     this._rewardedRound = 0;
     this._guessRewardedRound = 0;
     this.chatHistory = [];
@@ -554,7 +555,7 @@ class Game {
       const a = new Audio();
       a.loop = true;
       a.preload = "none";
-      a.src = "assets/lobby-loop.wav?v=16";
+      a.src = "assets/lobby-loop.wav?v=17";
       a.addEventListener("error", () => {
         if (this.phase === "lobby" && this.music && (this.music.mode === "file-wait" || this.music.mode === "file")) this.startLobbySynth();
       });
@@ -809,8 +810,11 @@ class Game {
       else this.toast(this.phase === "lobby" ? "Start the game first" : "Voting is not open yet");
     };
     this.$("guess-now-btn").onclick = () => {
-      if (this.isSpy && !this.guessSubmitted) this.openGuessModal();
-      else if (this.guessSubmitted) this.toast("You already submitted a guess this round");
+      if (this.guessSubmitted) return this.toast("You already submitted a guess this round");
+      if (!this.isSpy) return this.toast("Only the spy can guess the location");
+      if (MODES[this.mode] && MODES[this.mode].guess === false) return this.toast("Guessing is off in Hardcore mode", "error");
+      if (this.phase !== "reveal") return this.toast("Guess opens after the vote — survive it first");
+      this.openGuessModal();
     };
     this.$("sound-btn").onclick = () => {
       this.soundEnabled = !this.soundEnabled;
@@ -2293,6 +2297,36 @@ syncSoundBtn() {
         if (this.voiceOn) this.callAllPeers();
         break;
       }
+      case "leave": {
+        if (!this.isHost) break;
+        const pid = (conn && conn.peer) || data.id;
+        if (!pid || pid === this.myId) break;
+        this.connections.delete(pid);
+        this.pendingPlayers.delete(pid);
+        const lvc = this.voiceCalls.get(pid);
+        if (lvc) { try { lvc.close(); } catch (e) {} this.voiceCalls.delete(pid); }
+        this.detachVoice(pid);
+        const left = this.players.find(p => p.id === pid);
+        this.players = this.players.filter(p => p.id !== pid);
+        delete this.votes[pid];
+        Object.keys(this.votes).forEach(voter => { if (this.votes[voter] === pid) delete this.votes[voter]; });
+        const spyLeft = this.spyIds.includes(pid);
+        if (spyLeft) {
+          this.spyIds = this.spyIds.filter(id => id !== pid);
+          this.spyId = this.spyIds[0] || null;
+        }
+        try { if (conn) conn.close(); } catch (e) {}
+        this.broadcast({ type: "players", players: this.players, category: this.category, mode: this.mode });
+        this.renderPlayers();
+        this.setStatus(`Hosting · ${this.roomCode} · ${this.players.length}`, true);
+        if (left) { this.addSystemMessage(`${left.name} left the room.`); this.playSound("leave"); }
+        if (spyLeft && this.spyIds.length === 0 && (this.phase === "role" || this.phase === "discuss" || this.phase === "vote")) {
+          this.handleAllSpiesLeft(left ? left.name : "Spy");
+          break;
+        }
+        if (this.phase === "vote") { this.broadcastVoteCount(); this.maybeCloseVoting(); }
+        break;
+      }
       case "joinDenied":
         this.toast(data.reason || "Round in progress — waiting for next round", "info");
         this.setStatus(`Queued · ${this.roomCode}`, true);
@@ -2318,6 +2352,7 @@ syncSoundBtn() {
         this.playSound("leave");
         this.toast("Host left — room closed. Scores kept below.", "error");
         this.showFinalScores({ scores: data.scores || [], title: "Room Closed — Host Left" });
+        this.$("next-round-btn").style.display = "none";
         this.$("end-game-btn").innerHTML = `<i class="fa-solid fa-rotate-left"></i> New Room`;
         this.$("end-game-btn").onclick = () => location.reload();
         break;
@@ -2370,6 +2405,7 @@ syncSoundBtn() {
         this.pendingVote = null;
         this.spyGuess = null;
         this.guessSubmitted = false;
+        this.guessedSpies = new Set();
         this.chatHistory = [];
         if (Array.isArray(data.players)) this.players = data.players;
         this.hideResults();
@@ -2456,6 +2492,7 @@ syncSoundBtn() {
         this.pendingVote = null;
         this.spyGuess = null;
         this.guessSubmitted = false;
+        this.guessedSpies = new Set();
         if (Array.isArray(data.players)) this.players = data.players;
         this.hideResults();
         this.hideVoteModal();
@@ -2524,6 +2561,7 @@ syncSoundBtn() {
         this.pendingVote = null;
         this.spyGuess = null;
         this.guessSubmitted = false;
+        this.guessedSpies = new Set();
         this.chatHistory = [];
         this.waitingForNext = false;
         if (Array.isArray(data.players)) this.players = data.players;
@@ -2875,14 +2913,23 @@ syncSoundBtn() {
 
   leaveRoom() {
     if (this.isHost) {
+      // Leaving as host closes the room for everyone — confirm so a stray
+      // tap doesn't kill a live game.
+      if (this.connections.size > 0 && this.phase !== "lobby") {
+        try {
+          if (!confirm("Leave? This closes the room for everyone.")) return;
+        } catch (e) {}
+      }
       try { this.broadcast({ type: "hostLeft", scores: this.players.map(p => ({ id: p.id, name: p.name, score: p.score || 0 })) }); } catch (e) {}
       setTimeout(() => { try { if (this.peer) this.peer.destroy(); } catch (e) {} location.reload(); }, 350);
       try { if (this.localStream) this.localStream.getTracks().forEach(t => t.stop()); } catch (e) {}
       return;
     }
     try { if (this.localStream) this.localStream.getTracks().forEach(t => t.stop()); } catch (e) {}
-    try { if (this.peer) this.peer.destroy(); } catch (e) {}
-    location.reload();
+    // Best-effort heads-up so the host drops the roster row at once
+    // instead of waiting on the connection-close event.
+    try { this.sendToHost({ type: "leave", id: this.myId, name: this.myName }); } catch (e) {}
+    setTimeout(() => { try { if (this.peer) this.peer.destroy(); } catch (e) {} location.reload(); }, 150);
   }
 
   // ---------- game flow (host-authoritative) ----------
@@ -2934,6 +2981,7 @@ syncSoundBtn() {
     this.pendingVote = null;
     this.spyGuess = null;
     this.guessSubmitted = false;
+    this.guessedSpies = new Set();
     this.chatHistory = [];
     this.sendPersonalized("gameStart");
     this.showGame();
@@ -3113,6 +3161,7 @@ syncSoundBtn() {
     clearInterval(this.timerInterval);
     this.phase = "reveal";
     this.guessSubmitted = false;
+    this.guessedSpies = new Set();
 
     const tally = {};
     Object.values(this.votes).forEach(v => {
@@ -3174,9 +3223,14 @@ syncSoundBtn() {
       : (data.guessCorrect ? `<i class="fa-solid fa-map-location-dot"></i>` : `<i class="fa-solid fa-user-secret"></i>`);
     icon.style.background = data.spyCaught ? "var(--success)" : (data.guessCorrect ? "var(--warning)" : "var(--danger)");
 
+    // The location broadcasts to the whole room — but an escaped spy who
+    // hasn't guessed yet must not see it, or the +3 guess is free points.
+    // (UI-level fairness only: a determined spy could read the packet.)
+    const spyBlind = !data.isGuessUpdate && data.allowGuess && this.isSpy && !this.guessSubmitted
+      && (!MODES[this.mode] || MODES[this.mode].guess !== false);
     let html = `
       <div class="reveal-line"><i class="fa-solid fa-user-secret"></i><span>The spy was <strong>${this.escapeHtml(data.spyName || "?")}</strong></span></div>
-      <div class="reveal-line"><i class="fa-solid fa-location-dot"></i><span>Location: <strong>${this.escapeHtml(data.location || "?")}</strong></span></div>`;
+      <div class="reveal-line"><i class="fa-solid fa-location-dot"></i><span>Location: <strong>${spyBlind ? "???" : this.escapeHtml(data.location || "?")}</strong>${spyBlind ? " (hidden until you guess)" : ""}</span></div>`;
     if (data.eliminatedNames && data.eliminatedNames.length) {
       html += `<div class="reveal-line"><i class="fa-solid fa-check-to-slot"></i><span>Voted out: <strong>${this.escapeHtml(data.eliminatedNames.join(", "))}</strong>${data.eliminatedNames.length > 1 ? " (tie — spy survives)" : ""}</span></div>`;
     } else if (!data.isGuessUpdate) {
@@ -3206,6 +3260,18 @@ syncSoundBtn() {
 
     content.innerHTML = html;
     this.$("results").classList.remove("hidden");
+    const canGuessNow = spyBlind;
+    const oldGuessBtn = this.$("results-guess-btn");
+    if (oldGuessBtn) oldGuessBtn.remove();
+    if (canGuessNow) {
+      const gb = document.createElement("button");
+      gb.type = "button";
+      gb.id = "results-guess-btn";
+      gb.className = "btn primary";
+      gb.innerHTML = `<i class="fa-solid fa-map-location-dot"></i> Guess the location (+3)`;
+      gb.onclick = () => this.openGuessModal();
+      this.$("results-content").appendChild(gb);
+    }
     const card = this.$("results").querySelector(".results-card");
     const won = !!(data.spyCaught || data.guessCorrect);
     card.classList.toggle("win", won);
@@ -3214,8 +3280,14 @@ syncSoundBtn() {
     this.$("next-round-btn").style.display = hostOnly ? "flex" : "none";
     this.$("wait-host").classList.toggle("hidden", hostOnly);
     const egb = this.$("end-game-btn");
-    egb.innerHTML = `<i class="fa-solid fa-flag-checkered"></i> End Game`;
-    egb.onclick = () => this.endGame();
+    if (hostOnly) {
+      egb.innerHTML = `<i class="fa-solid fa-flag-checkered"></i> End Game`;
+      egb.onclick = () => this.endGame();
+    } else {
+      // Guests have no host controls here — they still need a way out.
+      egb.innerHTML = `<i class="fa-solid fa-door-open"></i> Leave Room`;
+      egb.onclick = () => this.leaveRoom();
+    }
 
     const r = data.round || this.round;
     const myVoteHit = this.myVote && this.myVote !== "__skip" && (data.spyIds || []).includes(this.myVote);
@@ -3258,15 +3330,15 @@ syncSoundBtn() {
       this.playSound("lose"); this.playLosePhrase();
     }
 
-    if (data.allowGuess && this.isSpy && !this.guessSubmitted) {
-      setTimeout(() => {
-        if (this.phase === "reveal" && this.isSpy && !this.guessSubmitted) this.openGuessModal();
-      }, 900);
-    }
+    // Guess modal sits above the results overlay and the results card
+    // carries its own Guess button, so no auto-open timer here.
   }
 
   openGuessModal() {
     if (this.guessSubmitted) return;
+    if (!this.isSpy) return;
+    if (MODES[this.mode] && MODES[this.mode].guess === false) return this.toast("Guessing is off in Hardcore mode", "error");
+    if (this.phase !== "reveal") return this.toast("Guess opens after the vote — survive it first");
     this.closeAllDropdowns();
     const modal = this.$("guess-modal");
     const options = this.$("guess-options");
@@ -3321,12 +3393,15 @@ syncSoundBtn() {
 
   resolveGuess(guess, conn, senderId) {
     if (this.phase !== "reveal") return;
-    if (this.guessSubmitted && conn) return;
     if (MODES[this.mode] && MODES[this.mode].guess === false) return;
     const spyConnId = conn ? conn.peer : this.myId;
     if (conn && senderId && senderId !== conn.peer) return;
     if (!guess || typeof guess !== "string") return;
     if (!this.spyIds.includes(spyConnId)) return;
+    try {
+      if (this.guessedSpies.has(spyConnId)) return;
+      this.guessedSpies.add(spyConnId);
+    } catch (e) { return; }
     this.guessSubmitted = true;
     const correct = guess === this.location;
     if (correct) {
@@ -3371,6 +3446,7 @@ syncSoundBtn() {
     this.pendingVote = null;
     this.spyGuess = null;
     this.guessSubmitted = false;
+    this.guessedSpies = new Set();
     this.sendPersonalized("nextRound");
     this.showGame();
     this.showRole();
@@ -3405,6 +3481,7 @@ syncSoundBtn() {
     this.pendingVote = null;
     this.spyGuess = null;
     this.guessSubmitted = false;
+    this.guessedSpies = new Set();
     this.chatHistory = [];
     this.spyIds = []; this.spyId = null; this.isSpy = false; this.location = "";
     this.endsAt = 0; this.timeLeft = 0; this.roleEndsAt = 0;
@@ -3457,17 +3534,25 @@ syncSoundBtn() {
         </span>
         <span class="pts">${s.score} pts</span>
       </div>`).join("");
-    this.$("next-round-btn").style.display = "none";
-    this.$("wait-host").classList.add("hidden");
     const endBtn = this.$("end-game-btn");
-    endBtn.innerHTML = `<i class="fa-solid fa-rotate-left"></i> Back to Lobby`;
-    endBtn.onclick = () => {
-      if (this.isHost) this.toLobby();
-      else {
+    const nextBtn = this.$("next-round-btn");
+    if (this.isHost) {
+      nextBtn.style.display = "none";
+      this.$("wait-host").classList.add("hidden");
+      endBtn.innerHTML = `<i class="fa-solid fa-rotate-left"></i> Back to Lobby`;
+      endBtn.onclick = () => this.toLobby();
+    } else {
+      // Finals leave guests with no host buttons — offer Leave plus a lobby ask.
+      this.$("wait-host").classList.add("hidden");
+      nextBtn.style.display = "flex";
+      nextBtn.innerHTML = `<i class="fa-solid fa-door-open"></i> Leave Room`;
+      nextBtn.onclick = () => this.leaveRoom();
+      endBtn.innerHTML = `<i class="fa-solid fa-hourglass-half"></i> Ask Host: Lobby`;
+      endBtn.onclick = () => {
         this.sendToHost({ type: "wantLobby", id: this.myId, name: this.myName });
         this.toast("Asked the host to return to lobby");
-      }
-    };
+      };
+    }
     this.$("results").classList.remove("hidden");
     this.$("results").querySelector(".results-card").classList.add("win");
     this.launchConfetti(90);
